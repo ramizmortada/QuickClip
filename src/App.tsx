@@ -27,6 +27,7 @@ import {
   AlertCircle,
   Plus,
   Pipette,
+  Download,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -127,6 +128,7 @@ export default function App() {
   const [isCheckingUpdates, setIsCheckingUpdates] = useState<boolean>(false)
   const [updateStatusText, setUpdateStatusText] = useState<string>("")
   const [updateNotice, setUpdateNotice] = useState<string | null>(null)
+  const [savedImageId, setSavedImageId] = useState<string | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
 
@@ -518,6 +520,32 @@ function isHexColorItem(item: ClipboardItem): boolean {
     }
   }
 
+  // Save Image to disk (Downloads folder)
+  const handleSaveImage = async (item: ClipboardItem, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!item.image_data_url) return
+
+    try {
+      const filename = `WinFlow_Screenshot_${Date.now()}.png`
+      await invoke<string>("save_image_to_disk", {
+        dataUrl: item.image_data_url,
+        defaultName: filename,
+      })
+      setSavedImageId(item.id)
+      setTimeout(() => setSavedImageId(null), 2000)
+    } catch (err) {
+      console.error("Save image failed via Rust, using fallback:", err)
+      const link = document.createElement("a")
+      link.href = item.image_data_url
+      link.download = `WinFlow_Screenshot_${Date.now()}.png`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      setSavedImageId(item.id)
+      setTimeout(() => setSavedImageId(null), 2000)
+    }
+  }
+
   // Clear Unpinned History
   const handleClearUnpinned = async () => {
     try {
@@ -880,8 +908,26 @@ function isHexColorItem(item: ClipboardItem): boolean {
                           )}
                           <span className="text-[10px] text-emerald-500/80 font-mono">{formattedTime}</span>
 
-                          {/* Quick Pin & Delete Action Buttons (Always Visible) */}
+                          {/* Quick Pin, Save & Delete Action Buttons (Always Visible) */}
                           <div className="flex items-center gap-0.5 ml-0.5">
+                            {isImage && item.image_data_url && (
+                              <button
+                                onClick={(e) => handleSaveImage(item, e)}
+                                className={`p-1 rounded transition-colors ${
+                                  savedImageId === item.id
+                                    ? "text-emerald-400 bg-emerald-900/60"
+                                    : "text-amber-400/80 hover:text-amber-300 hover:bg-amber-500/10"
+                                }`}
+                                title={savedImageId === item.id ? "Saved to Downloads!" : "Save image to Downloads"}
+                              >
+                                {savedImageId === item.id ? (
+                                  <Check className="h-3 w-3" />
+                                ) : (
+                                  <Download className="h-3 w-3" />
+                                )}
+                              </button>
+                            )}
+
                             <button
                               onClick={(e) => handleTogglePin(item.id, e)}
                               className={`p-1 rounded hover:bg-emerald-900/60 transition-colors ${
@@ -962,6 +1008,12 @@ function isHexColorItem(item: ClipboardItem): boolean {
                       <Copy className="mr-2 h-3.5 w-3.5 text-emerald-400" />
                       Copy to Clipboard Only
                     </ContextMenuItem>
+                    {isImage && item.image_data_url && (
+                      <ContextMenuItem onClick={(e) => handleSaveImage(item, e)}>
+                        <Download className="mr-2 h-3.5 w-3.5 text-amber-400" />
+                        Save Image to Downloads
+                      </ContextMenuItem>
+                    )}
                     <ContextMenuItem onClick={(e) => handleTogglePin(item.id, e)}>
                       <Pin className="mr-2 h-3.5 w-3.5 text-amber-400" />
                       {item.is_pinned ? "Unpin Item" : "Pin to Top"}

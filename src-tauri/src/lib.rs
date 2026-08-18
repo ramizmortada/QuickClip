@@ -269,6 +269,31 @@ fn clear_unpinned(app: AppHandle, state: State<'_, AppState>) -> Vec<ClipboardIt
 }
 
 #[tauri::command]
+fn save_image_to_disk(app: AppHandle, data_url: String, default_name: Option<String>) -> Result<String, String> {
+    use base64::Engine;
+    let base64_str = data_url.trim_start_matches("data:image/png;base64,");
+    let png_bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_str)
+        .map_err(|e| e.to_string())?;
+
+    let download_dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().picture_dir())
+        .or_else(|_| app.path().desktop_dir())
+        .map_err(|e| e.to_string())?;
+
+    let filename = default_name.unwrap_or_else(|| {
+        format!("WinFlow_Image_{}.png", chrono::Local::now().format("%Y%m%d_%H%M%S"))
+    });
+
+    let target_path = download_dir.join(&filename);
+    std::fs::write(&target_path, png_bytes).map_err(|e| e.to_string())?;
+
+    Ok(target_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn hide_window(window: tauri::Window) {
     let _ = window.hide();
 }
@@ -552,6 +577,7 @@ pub fn run() {
             reset_shortcuts,
             get_color_picker_shortcut,
             set_color_picker_shortcut,
+            save_image_to_disk,
             color_picker::start_color_picker,
             color_picker::toggle_color_picker,
             color_picker::finish_color_picker,
