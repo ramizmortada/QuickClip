@@ -5,7 +5,7 @@ use clipboard::{ClipboardItem, ClipboardManager};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, State, WindowEvent,
+    AppHandle, Emitter, Manager, State, WindowEvent,
 };
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -282,11 +282,13 @@ pub fn run() {
             }
 
             // Create System Tray Menu
-            let quit_i = MenuItem::with_id(app, "quit", "Quit QuickClip", true, None::<&str>)?;
             let show_i = MenuItem::with_id(app, "show", "Open QuickClip (Alt+V)", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+            let update_i = MenuItem::with_id(app, "check_update", "Check for Updates...", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "Quit QuickClip", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &update_i, &quit_i])?;
 
             let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -295,6 +297,10 @@ pub fn run() {
                     }
                     "show" => {
                         toggle_window(app.clone());
+                    }
+                    "check_update" => {
+                        toggle_window(app.clone());
+                        let _ = app.emit("check-for-updates", ());
                     }
                     _ => {}
                 })

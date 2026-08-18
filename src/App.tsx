@@ -19,6 +19,7 @@ import {
   Maximize2,
   Clock,
   Layers,
+  RefreshCw,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -57,7 +58,9 @@ export default function App() {
   const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false)
   const [updateInfo, setUpdateInfo] = useState<Update | null>(null)
   const [isUpdating, setIsUpdating] = useState<boolean>(false)
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState<boolean>(false)
   const [updateStatusText, setUpdateStatusText] = useState<string>("")
+  const [updateNotice, setUpdateNotice] = useState<string | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // 1. Fetch initial clipboard history and listen for live updates
@@ -74,14 +77,22 @@ export default function App() {
       })
 
     // Listen for live updates emitted by Rust background thread
-    let unlistenFn: (() => void) | undefined
+    let unlistenClipboard: (() => void) | undefined
     listen<ClipboardItem[]>("clipboard-updated", (event) => {
       setItems(event.payload)
     }).then((fn) => {
-      unlistenFn = fn
+      unlistenClipboard = fn
     }).catch((err) => {
       console.warn("Event listener not registered in browser preview:", err)
     })
+
+    // Listen for check-for-updates event from System Tray
+    let unlistenTrayUpdate: (() => void) | undefined
+    listen("check-for-updates", () => {
+      checkUpdates(true)
+    }).then((fn) => {
+      unlistenTrayUpdate = fn
+    }).catch(() => {})
 
     // Auto-focus search when window gets focus
     const handleFocus = () => {
@@ -90,24 +101,40 @@ export default function App() {
     window.addEventListener("focus", handleFocus)
 
     return () => {
-      if (unlistenFn) unlistenFn()
+      if (unlistenClipboard) unlistenClipboard()
+      if (unlistenTrayUpdate) unlistenTrayUpdate()
       window.removeEventListener("focus", handleFocus)
     }
   }, [])
 
   // Check for app updates via GitHub Releases
-  useEffect(() => {
-    const checkUpdates = async () => {
-      try {
-        const update = await check()
-        if (update) {
-          setUpdateInfo(update)
-        }
-      } catch (err) {
-        console.log("Update check:", err)
+  const checkUpdates = async (manual = false) => {
+    try {
+      if (manual) {
+        setIsCheckingUpdates(true)
+        setUpdateNotice("Checking for updates...")
       }
+      const update = await check()
+      if (update) {
+        setUpdateInfo(update)
+        setUpdateNotice(null)
+      } else if (manual) {
+        setUpdateNotice("QuickClip is up to date!")
+        setTimeout(() => setUpdateNotice(null), 3000)
+      }
+    } catch (err) {
+      console.log("Update check:", err)
+      if (manual) {
+        setUpdateNotice("Could not connect to GitHub")
+        setTimeout(() => setUpdateNotice(null), 3000)
+      }
+    } finally {
+      if (manual) setIsCheckingUpdates(false)
     }
-    checkUpdates()
+  }
+
+  useEffect(() => {
+    checkUpdates(false)
   }, [])
 
   const handleDownloadAndInstallUpdate = async () => {
@@ -321,6 +348,15 @@ export default function App() {
           <Button
             variant="ghost"
             size="iconSm"
+            onClick={() => checkUpdates(true)}
+            title="Check for updates"
+            className="text-slate-400 hover:text-sky-400 hover:bg-sky-500/10 h-6 w-6"
+          >
+            <RefreshCw className={`h-3 w-3 ${isCheckingUpdates ? "animate-spin text-sky-400" : ""}`} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="iconSm"
             onClick={() => setShowClearConfirm(true)}
             title="Clear unpinned history"
             className="text-slate-400 hover:text-red-400 hover:bg-red-500/10 h-6 w-6"
@@ -338,6 +374,22 @@ export default function App() {
           </Button>
         </div>
       </div>
+
+      {/* Manual Check Update Notice (if active) */}
+      {updateNotice && (
+        <div className="flex items-center justify-between border-b border-sky-500/30 bg-sky-950/70 px-3 py-1 text-[11px] text-sky-300 animate-in fade-in-50">
+          <div className="flex items-center gap-1.5">
+            <Sparkles className="h-3 w-3 text-sky-400" />
+            <span>{updateNotice}</span>
+          </div>
+          <button
+            onClick={() => setUpdateNotice(null)}
+            className="text-sky-400 hover:text-sky-200"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
 
       {/* Row 2: Dual Segmented Controls Side-by-Side */}
       <div className="flex items-center justify-between border-b border-slate-800/80 px-2.5 py-1.5 bg-slate-950/60 gap-2">
