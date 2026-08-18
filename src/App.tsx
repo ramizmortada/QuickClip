@@ -54,6 +54,7 @@ export default function App() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [selectedIndex, setSelectedIndex] = useState<number>(0)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
+  const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false)
   const [updateInfo, setUpdateInfo] = useState<Update | null>(null)
   const [isUpdating, setIsUpdating] = useState<boolean>(false)
   const [updateStatusText, setUpdateStatusText] = useState<string>("")
@@ -320,7 +321,7 @@ export default function App() {
           <Button
             variant="ghost"
             size="iconSm"
-            onClick={handleClearUnpinned}
+            onClick={() => setShowClearConfirm(true)}
             title="Clear unpinned history"
             className="text-slate-400 hover:text-red-400 hover:bg-red-500/10 h-6 w-6"
           >
@@ -338,7 +339,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* Row 2: Dual Segmented Tabs Side-by-Side */}
+      {/* Row 2: Dual Segmented Controls Side-by-Side */}
       <div className="flex items-center justify-between border-b border-slate-800/80 px-2.5 py-1.5 bg-slate-950/60 gap-2">
         {/* Left: Recent vs Pinned Tabs */}
         <div className="inline-flex h-6.5 items-center rounded-lg bg-slate-900/90 p-0.5 border border-slate-800/80">
@@ -368,45 +369,41 @@ export default function App() {
           </button>
         </div>
 
-        {/* Right: All / Text / Images Filters */}
+        {/* Right: Icon-based Filters with Tooltips */}
         <div className="inline-flex h-6.5 items-center rounded-lg bg-slate-900/90 p-0.5 border border-slate-800/80">
           <button
             onClick={() => setTypeFilter("all")}
-            className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium transition-all ${
+            className={`inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[10px] font-medium transition-all ${
               typeFilter === "all"
                 ? "bg-slate-800 text-slate-100 shadow-sm"
                 : "text-slate-400 hover:text-slate-200"
             }`}
-            title="All items"
+            title="Show All"
           >
-            <Layers className="h-3 w-3" />
+            <Layers className="h-3 w-3 mr-1" />
             <span>All</span>
           </button>
           <button
             onClick={() => setTypeFilter("text")}
-            className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium transition-all ${
+            className={`inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[10px] font-medium transition-all ${
               typeFilter === "text"
                 ? "bg-slate-800 text-sky-400 shadow-sm"
                 : "text-slate-400 hover:text-slate-200"
             }`}
-            title="Text & Code"
+            title={`Text & Code (${textCount})`}
           >
             <FileText className="h-3 w-3" />
-            <span>Text</span>
-            <span className="text-[9px] opacity-60">({textCount})</span>
           </button>
           <button
             onClick={() => setTypeFilter("image")}
-            className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium transition-all ${
+            className={`inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[10px] font-medium transition-all ${
               typeFilter === "image"
                 ? "bg-slate-800 text-amber-400 shadow-sm"
                 : "text-slate-400 hover:text-slate-200"
             }`}
-            title="Images & Screenshots"
+            title={`Screenshots & Images (${imageCount})`}
           >
             <ImageIcon className="h-3 w-3" />
-            <span>Images</span>
-            <span className="text-[9px] opacity-60">({imageCount})</span>
           </button>
         </div>
       </div>
@@ -636,6 +633,48 @@ export default function App() {
           >
             {isUpdating ? updateStatusText : "Update & Restart"}
           </Button>
+        </div>
+      )}
+
+      {/* Clear History Confirmation Modal */}
+      {showClearConfirm && (
+        <div
+          onClick={() => setShowClearConfirm(false)}
+          className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in-50"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="flex flex-col items-center text-center p-4 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl max-w-[270px] w-full"
+          >
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-red-500/10 text-red-400 mb-2 border border-red-500/20">
+              <Trash2 className="h-4 w-4" />
+            </div>
+            <h4 className="text-xs font-semibold text-slate-100">Clear Clipboard History?</h4>
+            <p className="text-[11px] text-slate-400 mt-1 mb-3.5 leading-relaxed">
+              This will remove unpinned items. Pinned items will remain safe.
+            </p>
+            <div className="flex items-center gap-2 w-full">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowClearConfirm(false)}
+                className="flex-1 h-7 text-xs border-slate-700 hover:bg-slate-800"
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  handleClearUnpinned()
+                  setShowClearConfirm(false)
+                }}
+                className="flex-1 h-7 text-xs bg-red-600 hover:bg-red-700 text-white font-medium"
+              >
+                Clear All
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 
