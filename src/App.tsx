@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow"
 import { check, type Update } from "@tauri-apps/plugin-updater"
 import { relaunch } from "@tauri-apps/plugin-process"
 import {
@@ -25,6 +26,7 @@ import {
   RotateCcw,
   AlertCircle,
   Plus,
+  Pipette,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -36,6 +38,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
+import ColorPickerOverlay from "./components/ColorPickerOverlay"
 
 export interface ClipboardItem {
   id: string
@@ -91,10 +94,21 @@ function formatShortcutDisplay(shortcutStr: string): string {
     .join(" + ")
 }
 
+function getInitialWindowLabel(): string {
+  try {
+    if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
+      const win = getCurrentWebviewWindow()
+      return win?.label || "main"
+    }
+  } catch {}
+  return "main"
+}
+
 export default function App() {
+  const [windowLabel, setWindowLabel] = useState<string>(getInitialWindowLabel)
   const [items, setItems] = useState<ClipboardItem[]>([])
   const [primaryTab, setPrimaryTab] = useState<"recent" | "pinned">("recent")
-  const [typeFilter, setTypeFilter] = useState<"all" | "text" | "image">("all")
+  const [typeFilter, setTypeFilter] = useState<"all" | "text" | "image" | "color">("all")
   const [search, setSearch] = useState("")
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [selectedIndex, setSelectedIndex] = useState<number>(0)
@@ -102,7 +116,8 @@ export default function App() {
   const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false)
   const [showSettings, setShowSettings] = useState<boolean>(false)
   const [globalShortcuts, setGlobalShortcuts] = useState<string[]>(["Alt+V"])
-  const [isRecording, setIsRecording] = useState<boolean>(false)
+  const [colorPickerShortcut, setColorPickerShortcut] = useState<string>("Alt+C")
+  const [recordingTarget, setRecordingTarget] = useState<"clipboard" | "picker" | null>(null)
   const [recordedKeys, setRecordedKeys] = useState<string[]>([])
   const [shortcutError, setShortcutError] = useState<string | null>(null)
   const [shortcutSuccess, setShortcutSuccess] = useState<string | null>(null)
@@ -115,8 +130,22 @@ export default function App() {
   const searchInputRef = useRef<HTMLInputElement>(null)
   const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
 
+  // Ensure window label is synchronized
+  useEffect(() => {
+    try {
+      const currentWin = getCurrentWebviewWindow()
+      if (currentWin && currentWin.label) {
+        setWindowLabel(currentWin.label)
+      }
+    } catch {
+      // Browser preview mode
+    }
+  }, [])
+
   // 1. Fetch initial clipboard history and listen for live updates
   useEffect(() => {
+    if (windowLabel === "picker") return
+
     // Initial fetch from Rust backend
     invoke<ClipboardItem[]>("get_history")
       .then((data) => {
@@ -134,6 +163,13 @@ export default function App() {
         if (shortcuts && shortcuts.length > 0) {
           setGlobalShortcuts(shortcuts)
         }
+      })
+      .catch(() => {})
+
+    // Fetch color picker shortcut
+    invoke<string>("get_color_picker_shortcut")
+      .then((sc) => {
+        if (sc) setColorPickerShortcut(sc)
       })
       .catch(() => {})
 
@@ -173,7 +209,7 @@ export default function App() {
       window.removeEventListener("focus", handleFocus)
       clearInterval(interval)
     }
-  }, [])
+  }, [windowLabel])
 
   // Check for app updates via GitHub Releases
   const checkUpdates = async (manual = false) => {
@@ -187,13 +223,13 @@ export default function App() {
         setUpdateInfo(update)
         setUpdateNotice(null)
       } else if (manual) {
-        setUpdateNotice("QuickClip is up to date!")
+        setUpdateNotice("WinFlow is up to date!")
         setTimeout(() => setUpdateNotice(null), 3000)
       }
     } catch (err) {
       console.log("Update check:", err)
       if (manual) {
-        setUpdateNotice("Could not connect to GitHub")
+        setUpdateNotice("Could not connect to update server")
         setTimeout(() => setUpdateNotice(null), 3000)
       }
     } finally {
@@ -202,8 +238,10 @@ export default function App() {
   }
 
   useEffect(() => {
-    checkUpdates(false)
-  }, [])
+    if (windowLabel !== "picker") {
+      checkUpdates(false)
+    }
+  }, [windowLabel])
 
   const handleDownloadAndInstallUpdate = async () => {
     if (!updateInfo) return
@@ -233,14 +271,14 @@ export default function App() {
     }
   }
 
-  // Handle adding a new global shortcut
+  // Handle adding a new global shortcut for Clipboard toggle
   const handleAddShortcut = async (newShortcutStr: string) => {
     try {
       setShortcutError(null)
       const updated = await invoke<string[]>("add_shortcut", { newShortcut: newShortcutStr })
       setGlobalShortcuts(updated)
       setShortcutSuccess(`Added ${formatShortcutDisplay(newShortcutStr)}`)
-      setIsRecording(false)
+      setRecordingTarget(null)
       setRecordedKeys([])
       setTimeout(() => setShortcutSuccess(null), 3000)
     } catch (err: any) {
@@ -263,14 +301,14 @@ export default function App() {
     }
   }
 
-  // Handle resetting shortcuts to default
+  // Handle resetting clipboard shortcuts to default
   const handleResetShortcuts = async () => {
     try {
       setShortcutError(null)
       const updated = await invoke<string[]>("reset_shortcuts")
       setGlobalShortcuts(updated)
       setShortcutSuccess("Reset to Alt + V")
-      setIsRecording(false)
+      setRecordingTarget(null)
       setRecordedKeys([])
       setTimeout(() => setShortcutSuccess(null), 3000)
     } catch (err: any) {
@@ -279,16 +317,32 @@ export default function App() {
     }
   }
 
+  // Handle saving color picker shortcut
+  const handleSaveColorPickerShortcut = async (newShortcutStr: string) => {
+    try {
+      setShortcutError(null)
+      const saved = await invoke<string>("set_color_picker_shortcut", { newShortcut: newShortcutStr })
+      setColorPickerShortcut(saved)
+      setShortcutSuccess(`Color Picker shortcut set to ${formatShortcutDisplay(saved)}`)
+      setRecordingTarget(null)
+      setRecordedKeys([])
+      setTimeout(() => setShortcutSuccess(null), 3000)
+    } catch (err: any) {
+      console.error("Failed to set color picker shortcut:", err)
+      setShortcutError(typeof err === "string" ? err : "Could not register shortcut")
+    }
+  }
+
   // Intercept key recording in Settings Modal
   useEffect(() => {
-    if (!isRecording) return
+    if (!recordingTarget) return
 
     const handleRecordKey = (e: KeyboardEvent) => {
       e.preventDefault()
       e.stopPropagation()
 
       if (e.key === "Escape") {
-        setIsRecording(false)
+        setRecordingTarget(null)
         setRecordedKeys([])
         return
       }
@@ -329,7 +383,11 @@ export default function App() {
 
       if (modifiers.length > 0 && keyName) {
         const candidate = `${modifiers.join("+")}+${keyName}`
-        handleAddShortcut(candidate)
+        if (recordingTarget === "clipboard") {
+          handleAddShortcut(candidate)
+        } else if (recordingTarget === "picker") {
+          handleSaveColorPickerShortcut(candidate)
+        }
       } else {
         setShortcutError("Please include at least one modifier key (Alt, Win, Ctrl, or Shift)")
       }
@@ -337,9 +395,14 @@ export default function App() {
 
     window.addEventListener("keydown", handleRecordKey, true)
     return () => window.removeEventListener("keydown", handleRecordKey, true)
-  }, [isRecording])
+  }, [recordingTarget])
 
-  // Filter items based on Primary Tab (Recent vs Pinned), Type Filter, and Search
+function isHexColorItem(item: ClipboardItem): boolean {
+  if (!item.text_content) return false
+  return /^#[0-9A-Fa-f]{6}$/.test(item.text_content.trim())
+}
+
+// Filter items based on Primary Tab (Recent vs Pinned), Type Filter, and Search
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
       // 1. Primary tab filter
@@ -348,10 +411,13 @@ export default function App() {
       }
 
       // 2. Content type filter
-      if (typeFilter === "text" && item.content_type === "image") {
+      if (typeFilter === "text" && (item.content_type === "image" || isHexColorItem(item))) {
         return false
       }
       if (typeFilter === "image" && item.content_type !== "image") {
+        return false
+      }
+      if (typeFilter === "color" && !isHexColorItem(item)) {
         return false
       }
 
@@ -470,7 +536,7 @@ export default function App() {
   // Global Keyboard Navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isRecording) return
+      if (recordingTarget) return
 
       if (e.key === "Escape") {
         if (previewImage) {
@@ -507,15 +573,24 @@ export default function App() {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [filteredItems, selectedIndex, previewImage, showSettings, showClearConfirm, isRecording])
+  }, [filteredItems, selectedIndex, previewImage, showSettings, showClearConfirm, recordingTarget])
+
+  // If this window is the fullscreen Color Picker overlay, render ColorPickerOverlay
+  if (windowLabel === "picker") {
+    return <ColorPickerOverlay />
+  }
 
   const pinnedCount = useMemo(() => items.filter((i) => i.is_pinned).length, [items])
-  const textCount = useMemo(() => items.filter((i) => i.content_type !== "image").length, [items])
+  const colorCount = useMemo(() => items.filter(isHexColorItem).length, [items])
+  const textCount = useMemo(
+    () => items.filter((i) => i.content_type !== "image" && !isHexColorItem(i)).length,
+    [items]
+  )
   const imageCount = useMemo(() => items.filter((i) => i.content_type === "image").length, [items])
 
   return (
     <div className="relative flex h-screen w-screen flex-col overflow-hidden rounded-2xl border border-emerald-800/60 bg-[#070f0a]/98 text-emerald-50 shadow-2xl backdrop-blur-2xl select-none">
-      {/* Row 1: Search Input + Settings & Clear History & Close Actions */}
+      {/* Row 1: Search Input + Color Picker + Settings & Actions */}
       <div className="relative flex items-center justify-between border-b border-emerald-900/60 px-3 py-2 bg-[#091710]/70">
         <div className="flex flex-1 items-center mr-2">
           <Search className="h-3.5 w-3.5 text-emerald-400/70 shrink-0 mr-2" />
@@ -542,6 +617,18 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-1 border-l border-emerald-900/60 pl-2">
+          {/* Color Picker Eyedropper Button */}
+          <Button
+            variant="ghost"
+            size="iconSm"
+            onClick={() => invoke("start_color_picker").catch(() => {})}
+            title={`Screen Color Picker (${formatShortcutDisplay(colorPickerShortcut)})`}
+            className="text-emerald-400/70 hover:text-[#14ad72] hover:bg-emerald-900/40 h-6 w-6"
+          >
+            <Pipette className="h-3.5 w-3.5" />
+          </Button>
+
+          {/* Settings Button */}
           <Button
             variant="ghost"
             size="iconSm"
@@ -549,12 +636,15 @@ export default function App() {
               setShowSettings(true)
               setShortcutError(null)
               setShortcutSuccess(null)
+              setRecordingTarget(null)
             }}
-            title={`Shortcut Settings (${globalShortcuts.map((s) => formatShortcutDisplay(s)).join(", ")})`}
+            title="Settings & Shortcuts"
             className="text-emerald-400/70 hover:text-[#14ad72] hover:bg-emerald-900/40 h-6 w-6"
           >
             <Settings className="h-3.5 w-3.5" />
           </Button>
+
+          {/* Refresh / Check updates button */}
           <Button
             variant="ghost"
             size="iconSm"
@@ -564,6 +654,8 @@ export default function App() {
           >
             <RefreshCw className={`h-3 w-3 ${isCheckingUpdates ? "animate-spin text-emerald-400" : ""}`} />
           </Button>
+
+          {/* Clear history button */}
           <Button
             variant="ghost"
             size="iconSm"
@@ -573,6 +665,8 @@ export default function App() {
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
+
+          {/* Close button */}
           <Button
             variant="ghost"
             size="iconSm"
@@ -657,6 +751,17 @@ export default function App() {
             <FileText className="h-3 w-3" />
           </button>
           <button
+            onClick={() => setTypeFilter("color")}
+            className={`inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[10px] font-medium transition-all ${
+              typeFilter === "color"
+                ? "bg-emerald-900/60 text-[#14ad72] shadow-sm border border-[#14ad72]/60 font-semibold"
+                : "text-emerald-400/60 hover:text-emerald-200"
+            }`}
+            title={`Colors & Hex (${colorCount})`}
+          >
+            <Pipette className="h-3 w-3" />
+          </button>
+          <button
             onClick={() => setTypeFilter("image")}
             className={`inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[10px] font-medium transition-all ${
               typeFilter === "image"
@@ -685,7 +790,7 @@ export default function App() {
                 ? "Pin any copied text or screenshot to access it quickly anytime."
                 : search
                 ? "No items match your search filter."
-                : "Copy text or take a screenshot to see it appear live."}
+                : "Copy text, screenshot, or pick a color with Alt+C to see it appear live."}
             </p>
           </div>
         ) : (
@@ -695,6 +800,10 @@ export default function App() {
               const isCopied = copiedId === item.id
               const isImage = item.content_type === "image"
               const formattedTime = formatTimeAMPM(item.copied_at)
+
+              // Check if item looks like a hex color code
+              const isHexColor =
+                item.text_content && /^#[0-9A-Fa-f]{6}$/.test(item.text_content.trim())
 
               return (
                 <ContextMenu key={item.id}>
@@ -730,6 +839,13 @@ export default function App() {
                                 </Badge>
                               )}
                             </>
+                          ) : isHexColor ? (
+                            <>
+                              <Pipette className="h-3.5 w-3.5 text-[#14ad72]" />
+                              <span className="capitalize font-medium text-emerald-300">
+                                Color Hex
+                              </span>
+                            </>
                           ) : item.content_type === "code" ? (
                             <>
                               <Code2 className="h-3.5 w-3.5 text-emerald-400" />
@@ -757,31 +873,32 @@ export default function App() {
                           )}
                         </div>
 
-                        {/* Right side: Metadata + Quick Actions on Hover */}
+                        {/* Right side: Metadata + Timestamp + Action Buttons */}
                         <div className="flex items-center gap-1.5">
                           {item.char_count && (
                             <span className="text-[10px] text-emerald-500/70">{item.char_count} chars</span>
                           )}
                           <span className="text-[10px] text-emerald-500/80 font-mono">{formattedTime}</span>
-                          {item.is_pinned && (
-                            <Pin className="h-3 w-3 fill-amber-400 text-amber-400 shrink-0" />
-                          )}
 
-                          {/* Quick Pin / Delete Action Buttons (visible on hover) */}
-                          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ml-1">
+                          {/* Quick Pin & Delete Action Buttons (Always Visible) */}
+                          <div className="flex items-center gap-0.5 ml-0.5">
                             <button
                               onClick={(e) => handleTogglePin(item.id, e)}
-                              className={`p-1 rounded hover:bg-emerald-900/60 ${
-                                item.is_pinned ? "text-amber-400" : "text-emerald-400/70 hover:text-emerald-200"
+                              className={`p-1 rounded hover:bg-emerald-900/60 transition-colors ${
+                                item.is_pinned
+                                  ? "text-amber-400 fill-amber-400"
+                                  : "text-emerald-500/60 hover:text-amber-300"
                               }`}
-                              title={item.is_pinned ? "Unpin (Ctrl+P)" : "Pin (Ctrl+P)"}
+                              title={item.is_pinned ? "Unpin Item (Ctrl+P)" : "Pin to Top (Ctrl+P)"}
                             >
-                              <Pin className="h-3 w-3" />
+                              <Pin
+                                className={`h-3 w-3 ${item.is_pinned ? "fill-amber-400 text-amber-400" : ""}`}
+                              />
                             </button>
                             <button
                               onClick={(e) => handleDelete(item.id, e)}
-                              className="p-1 rounded text-emerald-400/70 hover:text-red-400 hover:bg-red-500/10"
-                              title="Delete (Del)"
+                              className="p-1 rounded text-emerald-500/60 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                              title="Delete Item (Del)"
                             >
                               <Trash2 className="h-3 w-3" />
                             </button>
@@ -807,6 +924,16 @@ export default function App() {
                           >
                             <Maximize2 className="h-3 w-3" />
                           </button>
+                        </div>
+                      ) : isHexColor ? (
+                        <div className="flex items-center gap-2 py-0.5">
+                          <span
+                            className="h-5 w-5 rounded-md border border-white/30 shadow-sm shrink-0"
+                            style={{ backgroundColor: item.text_content!.trim() }}
+                          />
+                          <span className="font-mono text-xs font-semibold text-emerald-100">
+                            {item.text_content!.trim()}
+                          </span>
                         </div>
                       ) : (
                         <div className="text-xs text-emerald-100/90 font-normal line-clamp-2 break-all whitespace-pre-wrap font-sans select-text">
@@ -902,12 +1029,12 @@ export default function App() {
         </div>
       )}
 
-      {/* Multi-Shortcut Settings Modal */}
+      {/* Settings Modal (Clipboard Shortcuts & Color Picker Shortcut) */}
       {showSettings && (
         <div
           onClick={() => {
             setShowSettings(false)
-            setIsRecording(false)
+            setRecordingTarget(null)
           }}
           className="absolute inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-3.5 animate-in fade-in-50"
         >
@@ -922,14 +1049,14 @@ export default function App() {
                   <Keyboard className="h-4 w-4" />
                 </div>
                 <div>
-                  <h4 className="text-xs font-semibold text-emerald-100">Global Shortcuts</h4>
-                  <p className="text-[10px] text-emerald-400/60">Toggle QuickClip anytime</p>
+                  <h4 className="text-xs font-semibold text-emerald-100">Shortcut Settings</h4>
+                  <p className="text-[10px] text-emerald-400/60">Configure global shortcuts</p>
                 </div>
               </div>
               <button
                 onClick={() => {
                   setShowSettings(false)
-                  setIsRecording(false)
+                  setRecordingTarget(null)
                 }}
                 className="p-1 rounded-md text-emerald-400 hover:text-emerald-200 hover:bg-emerald-900/40"
               >
@@ -937,69 +1064,118 @@ export default function App() {
               </button>
             </div>
 
-            {/* Active Shortcuts List */}
-            <div className="py-2.5 space-y-2">
-              <span className="text-[10px] font-medium text-emerald-400/60 uppercase tracking-wider block">
-                Active Shortcuts:
-              </span>
+            {/* Modal Body */}
+            <div className="py-2.5 space-y-3.5 max-h-[300px] overflow-y-auto pr-0.5">
+              {/* Section 1: Clipboard Palette Shortcuts */}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-medium text-emerald-400/70 uppercase tracking-wider block">
+                  Toggle Clipboard Manager:
+                </span>
 
-              <div className="space-y-1.5 max-h-36 overflow-y-auto pr-0.5">
-                {globalShortcuts.map((sc, i) => (
-                  <div
-                    key={sc + i}
-                    className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-[#06100a] border border-emerald-900/70"
-                  >
+                <div className="space-y-1">
+                  {globalShortcuts.map((sc, i) => (
+                    <div
+                      key={sc + i}
+                      className="flex items-center justify-between px-2 py-1 rounded-lg bg-[#06100a] border border-emerald-900/70"
+                    >
+                      <div className="flex items-center gap-1">
+                        {sc.split("+").map((key, kIdx) => (
+                          <kbd
+                            key={kIdx}
+                            className="rounded-md bg-emerald-950 px-1.5 py-0.5 border border-emerald-700/60 font-mono text-[10px] font-semibold text-[#14ad72]"
+                          >
+                            {formatKeyDisplayName(key)}
+                          </kbd>
+                        ))}
+                      </div>
+
+                      {globalShortcuts.length > 1 && (
+                        <button
+                          onClick={() => handleRemoveShortcut(sc)}
+                          className="p-1 rounded text-emerald-500/60 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                          title="Remove this shortcut"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Add new clipboard shortcut button */}
+                <div
+                  onClick={() => {
+                    setRecordingTarget("clipboard")
+                    setRecordedKeys([])
+                    setShortcutError(null)
+                    setShortcutSuccess(null)
+                  }}
+                  className={`relative flex flex-col items-center justify-center p-2 rounded-lg border text-center transition-all cursor-pointer ${
+                    recordingTarget === "clipboard"
+                      ? "border-[#14ad72] bg-emerald-950/90 ring-2 ring-[#14ad72]/40 animate-pulse"
+                      : "border-dashed border-emerald-800/80 bg-[#06100a]/50 hover:border-[#14ad72]/60 hover:bg-[#0c1d14]"
+                  }`}
+                >
+                  {recordingTarget === "clipboard" ? (
+                    <div className="space-y-0.5">
+                      <p className="text-[11px] font-semibold text-[#14ad72]">
+                        {recordedKeys.length > 0
+                          ? recordedKeys.map((k) => formatKeyDisplayName(k)).join(" + ")
+                          : "Press keys to add (e.g. Win+V)..."}
+                      </p>
+                      <p className="text-[9px] text-emerald-400/60">Press Esc to cancel</p>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 text-emerald-300 hover:text-[#14ad72]">
+                      <Plus className="h-3 w-3 text-[#14ad72]" />
+                      <span className="text-[10.5px] font-medium">Add Another Shortcut</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Section 2: Screen Color Picker Shortcut */}
+              <div className="space-y-1.5 pt-2 border-t border-emerald-900/60">
+                <span className="text-[10px] font-medium text-emerald-400/70 uppercase tracking-wider block">
+                  Screen Color Picker:
+                </span>
+
+                <div className="flex items-center justify-between px-2 py-1 rounded-lg bg-[#06100a] border border-emerald-900/70">
+                  <div className="flex items-center gap-1.5">
+                    <Pipette className="h-3.5 w-3.5 text-[#14ad72]" />
                     <div className="flex items-center gap-1">
-                      {sc.split("+").map((key, kIdx) => (
+                      {colorPickerShortcut.split("+").map((key, kIdx) => (
                         <kbd
                           key={kIdx}
-                          className="rounded-md bg-emerald-950 px-1.5 py-0.5 border border-emerald-700/60 font-mono text-[10.5px] font-semibold text-[#14ad72] shadow-sm"
+                          className="rounded-md bg-emerald-950 px-1.5 py-0.5 border border-emerald-700/60 font-mono text-[10px] font-semibold text-[#14ad72]"
                         >
                           {formatKeyDisplayName(key)}
                         </kbd>
                       ))}
                     </div>
-
-                    {globalShortcuts.length > 1 && (
-                      <button
-                        onClick={() => handleRemoveShortcut(sc)}
-                        className="p-1 rounded text-emerald-500/60 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                        title="Remove this shortcut"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    )}
                   </div>
-                ))}
-              </div>
 
-              {/* Record / Add New Shortcut Box */}
-              <div
-                onClick={() => {
-                  setIsRecording(true)
-                  setRecordedKeys([])
-                  setShortcutError(null)
-                  setShortcutSuccess(null)
-                }}
-                className={`relative flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all cursor-pointer mt-2 ${
-                  isRecording
-                    ? "border-[#14ad72] bg-emerald-950/90 ring-2 ring-[#14ad72]/40 animate-pulse"
-                    : "border-dashed border-emerald-800/80 bg-[#06100a]/50 hover:border-[#14ad72]/60 hover:bg-[#0c1d14]"
-                }`}
-              >
-                {isRecording ? (
-                  <div className="space-y-1 py-0.5">
-                    <p className="text-xs font-semibold text-[#14ad72]">
+                  <button
+                    onClick={() => {
+                      setRecordingTarget("picker")
+                      setRecordedKeys([])
+                      setShortcutError(null)
+                      setShortcutSuccess(null)
+                    }}
+                    className="text-[10px] text-emerald-400 hover:text-[#14ad72] underline underline-offset-2"
+                  >
+                    Change
+                  </button>
+                </div>
+
+                {recordingTarget === "picker" && (
+                  <div className="relative flex flex-col items-center justify-center p-2 rounded-lg border border-[#14ad72] bg-emerald-950/90 ring-2 ring-[#14ad72]/40 animate-pulse text-center">
+                    <p className="text-[11px] font-semibold text-[#14ad72]">
                       {recordedKeys.length > 0
                         ? recordedKeys.map((k) => formatKeyDisplayName(k)).join(" + ")
-                        : "Press keys to add (e.g. Win+V)..."}
+                        : "Press new Color Picker keys (e.g. Alt+C)..."}
                     </p>
-                    <p className="text-[9.5px] text-emerald-400/60">Press Esc to cancel</p>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1.5 text-emerald-300 hover:text-[#14ad72] py-0.5">
-                    <Plus className="h-3.5 w-3.5 text-[#14ad72]" />
-                    <span className="text-xs font-medium">Add New Shortcut</span>
+                    <p className="text-[9px] text-emerald-400/60">Press Esc to cancel</p>
                   </div>
                 )}
               </div>
@@ -1025,17 +1201,20 @@ export default function App() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={handleResetShortcuts}
+                onClick={() => {
+                  handleResetShortcuts()
+                  handleSaveColorPickerShortcut("Alt+C")
+                }}
                 className="h-7 px-2 text-[10px] text-emerald-400/60 hover:text-emerald-200"
               >
                 <RotateCcw className="h-3 w-3 mr-1" />
-                Reset (Alt+V)
+                Reset Defaults
               </Button>
               <Button
                 size="sm"
                 onClick={() => {
                   setShowSettings(false)
-                  setIsRecording(false)
+                  setRecordingTarget(null)
                 }}
                 className="h-7 px-3 text-[11px] bg-[#14ad72] hover:bg-emerald-400 text-slate-950 font-semibold"
               >

@@ -157,6 +157,57 @@ impl ClipboardManager {
         Ok(())
     }
 
+    pub fn add_text_item(&self, text: &str, app_handle: &AppHandle) {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        let mut hasher = Sha256::new();
+        hasher.update(text.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+
+        *self.last_hash.lock() = Some(hash.clone());
+
+        let now = Local::now().format("%l:%M %p").to_string().trim().to_string();
+        let char_count = text.chars().count();
+        let content_type = detect_content_type(text);
+        let language = detect_code_language(text);
+
+        let mut items = self.items.lock();
+
+        if let Some(pos) = items.iter().position(|i| i.hash == hash) {
+            let mut existing = items.remove(pos);
+            existing.copied_at = now;
+            items.insert(0, existing);
+        } else {
+            let new_item = ClipboardItem {
+                id: format!("txt_{}_{}", chrono::Utc::now().timestamp_millis(), &hash[..8]),
+                content_type,
+                text_content: Some(text.to_string()),
+                image_data_url: None,
+                image_width: None,
+                image_height: None,
+                image_size_bytes: None,
+                hash: hash.clone(),
+                copied_at: now,
+                is_pinned: false,
+                char_count: Some(char_count),
+                language,
+            };
+            items.insert(0, new_item);
+
+            if items.len() > 150 {
+                if let Some(last_unpinned) = items.iter().rposition(|i| !i.is_pinned) {
+                    items.remove(last_unpinned);
+                }
+            }
+        }
+
+        save_persisted_items(app_handle, &items);
+        let _ = app_handle.emit("clipboard-updated", items.clone());
+    }
+
     pub fn start_monitoring(&self, app_handle: AppHandle) {
         let items_arc = Arc::clone(&self.items);
         let last_hash_arc = Arc::clone(&self.last_hash);

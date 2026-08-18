@@ -1,23 +1,26 @@
-# ⚡ QuickClip
+# ⚡ WinFlow
 
-A fast, lightweight, and modern clipboard manager for Windows built with **Tauri v2**, **Rust**, **React 19**, **Tailwind CSS**, and **shadcn/ui**.
+A fast, lightweight, and modern clipboard manager and desktop utilities companion for Windows built with **Tauri v2**, **Rust**, **React 19**, **Tailwind CSS**, and **shadcn/ui**.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6.svg)
 ![RAM Footprint](https://img.shields.io/badge/RAM-~25MB-emerald.svg)
-<img width="451" height="499" alt="capture_260818_163304" src="https://github.com/user-attachments/assets/ffb0bc2c-ced5-42ff-abdb-dea1a12afc3d" />
+
 ---
 
 ## ✨ Features
 
-- 📋 **Text & Screenshot Capture**: Automatically listens to clipboard updates and stores both plain/rich text and high-resolution screenshot images.
-- 🔄 **Smart Deduplication & Reordering**: Re-copying an item moves it straight to the top of the history with a refreshed timestamp rather than creating duplicate entries.
-- ⚡ **Auto-Paste on Click / Enter**: Selecting any card or pressing `Enter` automatically writes to clipboard, closes the palette, and simulates `Ctrl + V` into your active input field.
+- 📋 **Text & Screenshot Capture**: Automatically listens to clipboard updates and stores plain/rich text, code blocks, URLs, and high-resolution screenshots.
+- 🎨 **Screen Color Picker (`Alt + C`)**: Instant magnifying loupe that samples any pixel on your desktop and copies the `#HEX` code with one click.
+- 🎨 **Color History Filter**: Dedicated color filter tab to quickly browse, review, and copy your captured palette colors.
+- 🔄 **Smart Deduplication & Reordering**: Re-copying an item moves it straight to the top of your history with a refreshed timestamp.
+- ⚡ **Instant Paste on Click / Enter**: Selecting any card or pressing `Enter` automatically writes to clipboard, closes the palette, and simulates `Ctrl + V` into your active input field.
 - 📌 **Recent & Pinned Tabs**: Dedicated tab for pinned snippets and persistent items that survive history clears and computer restarts.
-- 🔍 **Sub-Filters & Search**: Fast search with filter chips for **All**, **Text Only**, and **Images Only**.
+- 🔍 **Sub-Filters & Search**: Fast search with filter chips for **All**, **Text**, **Colors**, and **Images**.
 - 🎯 **Smart Caret / Input Field Anchoring**: Automatically opens docked above or below your active text box, with edge-clamping and instant click-outside auto-close.
+- ⚙️ **Custom Multi-Shortcuts**: Configure multiple global shortcuts for opening the clipboard or color picker directly in Settings.
 - 🚀 **Windows Auto-Start**: Runs silently in the system tray on Windows startup.
-- ⌨️ **Global Shortcut**: Press **`Alt + V`** anywhere on Windows to toggle the palette.
+- 🔄 **In-App Auto Updates**: Built-in automatic updates directly from GitHub Releases.
 
 ---
 
@@ -25,7 +28,7 @@ A fast, lightweight, and modern clipboard manager for Windows built with **Tauri
 
 - **Backend**: [Tauri v2](https://v2.tauri.app/) + [Rust](https://www.rust-lang.org/) (native Win32 API hooks & low memory footprint ~25MB)
 - **Frontend**: [React 19](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/) + [Vite](https://vitejs.dev/)
-- **Styling**: [Tailwind CSS](https://tailwindcss.com/)
+- **Styling**: [Tailwind CSS](https://tailwindcss.com/) (Dark Emerald Theme)
 - **UI Components**: [shadcn/ui](https://ui.shadcn.com/) (`cmdk`, `tabs`, `badges`, `scroll-area`, `context-menu`, `lucide-react`)
 
 ---
@@ -40,8 +43,8 @@ A fast, lightweight, and modern clipboard manager for Windows built with **Tauri
 
 ```bash
 # Clone the repository
-git clone https://github.com/ramizmortada/clipbaord.git
-cd clipbaord
+git clone https://github.com/ramizmortada/QuickClip.git
+cd QuickClip
 
 # Install dependencies
 npm install
@@ -63,9 +66,10 @@ The compiled executable and installer will be generated in `src-tauri/target/rel
 
 | Shortcut | Action |
 | :--- | :--- |
-| `Alt + V` | Open / Toggle QuickClip anywhere |
+| `Alt + V` | Open / Toggle WinFlow Clipboard anywhere |
+| `Alt + C` | Open / Toggle Screen Color Picker |
 | `↑` / `↓` | Navigate clipboard items |
 | `Enter` | Paste selected item into active field |
 | `Ctrl + P` | Pin / Unpin selected item |
 | `Delete` | Remove selected item |
-| `Esc` | Hide QuickClip |
+| `Esc` | Hide WinFlow / Exit Color Picker |

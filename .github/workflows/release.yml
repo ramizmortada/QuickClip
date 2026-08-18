@@ -1,4 +1,4 @@
-name: Release QuickClip
+name: Release WinFlow
 
 on:
   push:
@@ -50,21 +50,24 @@ jobs:
           # Generate latest.json updater manifest
           $tag = "${{ github.ref_name }}"
           $ver = $tag.TrimStart("v")
-          $sigPath = "src-tauri/target/release/bundle/nsis/quickclip_${ver}_x64-setup.exe.sig"
-          if (Test-Path $sigPath) {
-              $sig = (Get-Content -Raw $sigPath).Trim()
+          $setupExe = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/*-setup.exe" | Select-Object -First 1
+          $setupSig = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/*-setup.exe.sig" | Select-Object -First 1
+
+          if ($setupSig -and $setupExe) {
+              $exeName = $setupExe.Name
+              $sig = (Get-Content -Raw $setupSig.FullName).Trim()
               $latestJson = @{
                   version = $ver
-                  notes = "QuickClip $tag release"
+                  notes = "WinFlow $tag release"
                   pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
                   platforms = @{
                       "windows-x86_64" = @{
                           signature = $sig
-                          url = "https://github.com/${{ github.repository }}/releases/download/$tag/quickclip_${ver}_x64-setup.exe"
+                          url = "https://github.com/${{ github.repository }}/releases/download/$tag/$exeName"
                       }
                       "windows-x86_64-nsis" = @{
                           signature = $sig
-                          url = "https://github.com/${{ github.repository }}/releases/download/$tag/quickclip_${ver}_x64-setup.exe"
+                          url = "https://github.com/${{ github.repository }}/releases/download/$tag/$exeName"
                       }
                   }
               } | ConvertTo-Json -Depth 5
@@ -75,8 +78,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: QuickClip ${{ github.ref_name }}
-          body: 'QuickClip for Windows - Download the setup installer or update directly in-app.'
+          name: WinFlow ${{ github.ref_name }}
+          body: 'WinFlow for Windows - Download the setup installer or update directly in-app.'
           draft: false
           prerelease: false
           files: upload/*

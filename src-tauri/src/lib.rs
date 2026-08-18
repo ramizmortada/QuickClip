@@ -1,4 +1,5 @@
 mod clipboard;
+mod color_picker;
 
 use std::sync::{Arc, Mutex};
 use clipboard::{ClipboardItem, ClipboardManager};
@@ -17,13 +18,15 @@ struct AppConfig {
     shortcut: Option<String>,
     #[serde(default)]
     shortcuts: Vec<String>,
+    #[serde(default)]
+    color_picker_shortcut: Option<String>,
 }
 
 fn get_config_path(app: &AppHandle) -> Option<std::path::PathBuf> {
     app.path().app_data_dir().ok().map(|p| p.join("config.json"))
 }
 
-fn load_saved_shortcuts(app: &AppHandle) -> Vec<String> {
+fn load_saved_config(app: &AppHandle) -> (Vec<String>, String) {
     if let Some(path) = get_config_path(app) {
         if let Ok(content) = std::fs::read_to_string(path) {
             if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
@@ -34,16 +37,23 @@ fn load_saved_shortcuts(app: &AppHandle) -> Vec<String> {
                         list.push(s_trimmed);
                     }
                 }
-                if !list.is_empty() {
-                    return list;
+                if list.is_empty() {
+                    list = vec!["Alt+V".to_string()];
                 }
+
+                let picker_sc = config
+                    .color_picker_shortcut
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| "Alt+C".to_string());
+
+                return (list, picker_sc);
             }
         }
     }
-    vec!["Alt+V".to_string()]
+    (vec!["Alt+V".to_string()], "Alt+C".to_string())
 }
 
-fn save_saved_shortcuts(app: &AppHandle, shortcuts: &[String]) {
+fn save_saved_config(app: &AppHandle, shortcuts: &[String], color_picker_shortcut: &str) {
     if let Some(path) = get_config_path(app) {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -51,6 +61,7 @@ fn save_saved_shortcuts(app: &AppHandle, shortcuts: &[String]) {
         let config = AppConfig {
             shortcut: shortcuts.first().cloned(),
             shortcuts: shortcuts.to_vec(),
+            color_picker_shortcut: Some(color_picker_shortcut.to_string()),
         };
         if let Ok(json) = serde_json::to_string_pretty(&config) {
             let _ = std::fs::write(path, json);
@@ -58,9 +69,10 @@ fn save_saved_shortcuts(app: &AppHandle, shortcuts: &[String]) {
     }
 }
 
-struct AppState {
-    manager: Arc<ClipboardManager>,
-    current_shortcuts: Arc<Mutex<Vec<String>>>,
+pub struct AppState {
+    pub manager: Arc<ClipboardManager>,
+    pub current_shortcuts: Arc<Mutex<Vec<String>>>,
+    pub color_picker_shortcut: Arc<Mutex<String>>,
 }
 
 #[cfg(windows)]
@@ -263,6 +275,13 @@ fn hide_window(window: tauri::Window) {
 
 #[tauri::command]
 fn toggle_window(app: AppHandle) {
+    // If color picker is active, automatically close it so clipboard opens cleanly
+    if let Some(picker) = app.get_webview_window("picker") {
+        if picker.is_visible().unwrap_or(false) {
+            let _ = color_picker::cancel_color_picker(app.clone());
+        }
+    }
+
     if let Some(window) = app.get_webview_window("main") {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
@@ -306,7 +325,8 @@ fn add_shortcut(app: AppHandle, state: State<'_, AppState>, new_shortcut: String
         .map_err(|e| format!("Failed to register '{}' (it may be reserved by Windows or another app): {}", clean, e))?;
 
     current.push(clean);
-    save_saved_shortcuts(&app, &current);
+    let picker_sc = state.color_picker_shortcut.lock().unwrap().clone();
+    save_saved_config(&app, &current, &picker_sc);
 
     Ok(current.clone())
 }
@@ -325,7 +345,8 @@ fn remove_shortcut(app: AppHandle, state: State<'_, AppState>, shortcut_to_remov
         if let Ok(parsed) = removed.parse::<Shortcut>() {
             let _ = app.global_shortcut().unregister(parsed);
         }
-        save_saved_shortcuts(&app, &current);
+        let picker_sc = state.color_picker_shortcut.lock().unwrap().clone();
+        save_saved_config(&app, &current, &picker_sc);
     }
 
     Ok(current.clone())
@@ -348,24 +369,59 @@ fn reset_shortcuts(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<Str
     }
 
     *current = default_list.clone();
-    save_saved_shortcuts(&app, &default_list);
+    let picker_sc = state.color_picker_shortcut.lock().unwrap().clone();
+    save_saved_config(&app, &default_list, &picker_sc);
 
     Ok(default_list)
+}
+
+#[tauri::command]
+fn get_color_picker_shortcut(state: State<'_, AppState>) -> String {
+    state.color_picker_shortcut.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn set_color_picker_shortcut(app: AppHandle, state: State<'_, AppState>, new_shortcut: String) -> Result<String, String> {
+    let clean = new_shortcut.trim().to_string();
+    let parsed: Shortcut = clean
+        .parse()
+        .map_err(|e| format!("Invalid shortcut combination '{}': {:?}", clean, e))?;
+
+    let mut current = state.color_picker_shortcut.lock().unwrap();
+
+    // Unregister old shortcut
+    if let Ok(old_parsed) = current.parse::<Shortcut>() {
+        let _ = app.global_shortcut().unregister(old_parsed);
+    }
+
+    // Register new shortcut
+    app.global_shortcut()
+        .register(parsed)
+        .map_err(|e| format!("Failed to register '{}' (it may be in use by Windows or another app): {}", clean, e))?;
+
+    *current = clean.clone();
+    let shortcuts = state.current_shortcuts.lock().unwrap().clone();
+    save_saved_config(&app, &shortcuts, &clean);
+
+    Ok(clean)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let manager = Arc::new(ClipboardManager::new());
     let current_shortcuts = Arc::new(Mutex::new(vec!["Alt+V".to_string()]));
+    let color_picker_shortcut = Arc::new(Mutex::new("Alt+C".to_string()));
 
     let manager_for_thread = Arc::clone(&manager);
     let manager_for_setup = Arc::clone(&manager);
     let current_shortcuts_for_setup = Arc::clone(&current_shortcuts);
+    let color_picker_shortcut_for_setup = Arc::clone(&color_picker_shortcut);
 
     tauri::Builder::default()
         .manage(AppState {
             manager,
             current_shortcuts,
+            color_picker_shortcut,
         })
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -376,18 +432,31 @@ pub fn run() {
         ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
+                .with_handler(|app, shortcut, event| {
                     if event.state() == ShortcutState::Pressed {
+                        let state = app.state::<AppState>();
+                        let picker_sc = state.color_picker_shortcut.lock().unwrap().clone();
+
+                        if let Ok(picker_parsed) = picker_sc.parse::<Shortcut>() {
+                            if picker_parsed == *shortcut {
+                                let _ = color_picker::toggle_color_picker(app.clone());
+                                return;
+                            }
+                        }
+
+                        // Otherwise toggle clipboard window
                         toggle_window(app.clone());
                     }
                 })
                 .build(),
         )
         .on_window_event(|window, event| {
-            // Auto-close / hide window when clicking outside (window loses focus)
-            if let WindowEvent::Focused(focused) = event {
-                if !focused {
-                    let _ = window.hide();
+            // Auto-close / hide main window when clicking outside (window loses focus)
+            if window.label() == "main" {
+                if let WindowEvent::Focused(focused) = event {
+                    if !focused {
+                        let _ = window.hide();
+                    }
                 }
             }
         })
@@ -397,14 +466,19 @@ pub fn run() {
             // Load saved clipboard history from disk
             manager_for_setup.init_from_disk(&app_handle);
 
-            // Load saved shortcuts from disk and register all
-            let saved_shortcuts = load_saved_shortcuts(&app_handle);
+            // Load saved shortcuts & color picker shortcut from disk
+            let (saved_shortcuts, saved_picker_sc) = load_saved_config(&app_handle);
             *current_shortcuts_for_setup.lock().unwrap() = saved_shortcuts.clone();
+            *color_picker_shortcut_for_setup.lock().unwrap() = saved_picker_sc.clone();
 
             for sc in &saved_shortcuts {
                 if let Ok(parsed) = sc.parse::<Shortcut>() {
                     let _ = app.global_shortcut().register(parsed);
                 }
+            }
+
+            if let Ok(picker_parsed) = saved_picker_sc.parse::<Shortcut>() {
+                let _ = app.global_shortcut().register(picker_parsed);
             }
 
             // Enable autostart with Windows on boot
@@ -414,10 +488,11 @@ pub fn run() {
             manager_for_thread.start_monitoring(app_handle.clone());
 
             // Create System Tray Menu
-            let show_i = MenuItem::with_id(app, "show", "Open QuickClip", true, None::<&str>)?;
+            let show_i = MenuItem::with_id(app, "show", "Open WinFlow", true, None::<&str>)?;
+            let picker_i = MenuItem::with_id(app, "color_picker", "Color Picker (Alt+C)", true, None::<&str>)?;
             let update_i = MenuItem::with_id(app, "check_update", "Check for Updates...", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit QuickClip", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &update_i, &quit_i])?;
+            let quit_i = MenuItem::with_id(app, "quit", "Quit WinFlow", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &picker_i, &update_i, &quit_i])?;
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -429,6 +504,9 @@ pub fn run() {
                     }
                     "show" => {
                         toggle_window(app.clone());
+                    }
+                    "color_picker" => {
+                        let _ = color_picker::toggle_color_picker(app.clone());
                     }
                     "check_update" => {
                         toggle_window(app.clone());
@@ -472,7 +550,14 @@ pub fn run() {
             add_shortcut,
             remove_shortcut,
             reset_shortcuts,
+            get_color_picker_shortcut,
+            set_color_picker_shortcut,
+            color_picker::start_color_picker,
+            color_picker::toggle_color_picker,
+            color_picker::finish_color_picker,
+            color_picker::cancel_color_picker,
+            color_picker::sample_pixel_at_cursor,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running quickclip application");
+        .expect("error while running winflow application");
 }

@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "quickclip",
-  "version": "0.1.6",
-  "identifier": "com.quickclip.app",
+  "productName": "WinFlow",
+  "version": "0.2.0",
+  "identifier": "com.winflow.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "QuickClip",
+        "title": "WinFlow",
         "width": 370,
         "height": 440,
         "resizable": false,
@@ -23,6 +23,18 @@
         "skipTaskbar": true,
         "shadow": false,
         "center": true,
+        "visible": false
+      },
+      {
+        "label": "picker",
+        "title": "WinFlow Color Picker",
+        "fullscreen": false,
+        "resizable": false,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
         "visible": false
       }
     ],
