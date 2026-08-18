@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
+import { check, type Update } from "@tauri-apps/plugin-updater"
+import { relaunch } from "@tauri-apps/plugin-process"
 import {
   Search,
   Pin,
@@ -52,6 +54,9 @@ export default function App() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [selectedIndex, setSelectedIndex] = useState<number>(0)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
+  const [updateInfo, setUpdateInfo] = useState<Update | null>(null)
+  const [isUpdating, setIsUpdating] = useState<boolean>(false)
+  const [updateStatusText, setUpdateStatusText] = useState<string>("")
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // 1. Fetch initial clipboard history and listen for live updates
@@ -88,6 +93,49 @@ export default function App() {
       window.removeEventListener("focus", handleFocus)
     }
   }, [])
+
+  // Check for app updates via GitHub Releases
+  useEffect(() => {
+    const checkUpdates = async () => {
+      try {
+        const update = await check()
+        if (update) {
+          setUpdateInfo(update)
+        }
+      } catch (err) {
+        console.log("Update check:", err)
+      }
+    }
+    checkUpdates()
+  }, [])
+
+  const handleDownloadAndInstallUpdate = async () => {
+    if (!updateInfo) return
+    try {
+      setIsUpdating(true)
+      setUpdateStatusText("Downloading...")
+      let downloaded = 0
+      let contentLength = 0
+      await updateInfo.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          contentLength = event.data.contentLength || 0
+        } else if (event.event === "Progress") {
+          downloaded += event.data.chunkLength
+          if (contentLength > 0) {
+            const pct = Math.round((downloaded / contentLength) * 100)
+            setUpdateStatusText(`Downloading ${pct}%...`)
+          }
+        } else if (event.event === "Finished") {
+          setUpdateStatusText("Restarting...")
+        }
+      })
+      await relaunch()
+    } catch (e) {
+      console.error("Update error:", e)
+      setUpdateStatusText("Failed")
+      setTimeout(() => setIsUpdating(false), 2500)
+    }
+  }
 
   // Filter items based on Primary Tab (Recent vs Pinned), Type Filter, and Search
   const filteredItems = useMemo(() => {
@@ -570,6 +618,26 @@ export default function App() {
           </span>
         </div>
       </div>
+
+      {/* Update Available Notification Banner */}
+      {updateInfo && (
+        <div className="flex items-center justify-between border-t border-sky-500/40 bg-sky-950/90 px-3 py-1.5 text-xs text-sky-200 backdrop-blur-md animate-in slide-in-from-bottom-2">
+          <div className="flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+            <span className="font-medium text-[11px]">
+              Update v{updateInfo.version} available!
+            </span>
+          </div>
+          <Button
+            size="sm"
+            onClick={handleDownloadAndInstallUpdate}
+            disabled={isUpdating}
+            className="h-6 px-2.5 text-[10px] bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold shadow-sm"
+          >
+            {isUpdating ? updateStatusText : "Update & Restart"}
+          </Button>
+        </div>
+      )}
 
       {/* Fullscreen Image Preview Lightbox Modal */}
       {previewImage && (
