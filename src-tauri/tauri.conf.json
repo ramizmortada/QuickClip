@@ -58,7 +58,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE2RTg0N0MxODlFNUZCNkEKUldScSsrV0p3VWZvRnQrTDdjODlCV2pKbVRUbk9panJ3dVhsbUluTzNQYmp5eGlmMjBGaVVqYkMK",
       "endpoints": [
-        "https://github.com/ramizmortada/QuickClip/releases/latest/download/latest.json"
+        "https://github.com/ramizmortada/WinFlow/releases/latest/download/latest.json"
       ]
     }
   }
