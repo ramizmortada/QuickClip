@@ -24,7 +24,7 @@ const ContextMenuSubTrigger = React.forwardRef<
   <ContextMenuPrimitive.SubTrigger
     ref={ref}
     className={cn(
-      "flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none focus:bg-slate-800 focus:text-slate-100 data-[state=open]:bg-slate-800 data-[state=open]:text-slate-100",
+      "flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none focus:bg-emerald-900/60 focus:text-emerald-100 data-[state=open]:bg-emerald-900/60 data-[state=open]:text-emerald-100",
       inset && "pl-8",
       className
     )}
@@ -43,7 +43,7 @@ const ContextMenuSubContent = React.forwardRef<
   <ContextMenuPrimitive.SubContent
     ref={ref}
     className={cn(
-      "z-50 min-w-[8rem] overflow-hidden rounded-md border border-slate-800 bg-slate-900 p-1 text-slate-100 shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
+      "z-50 min-w-[8rem] overflow-hidden rounded-md border border-emerald-900/80 bg-[#0a1811] p-1 text-emerald-100 shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
       className
     )}
     {...props}
@@ -59,7 +59,7 @@ const ContextMenuContent = React.forwardRef<
     <ContextMenuPrimitive.Content
       ref={ref}
       className={cn(
-        "z-50 min-w-[10rem] overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950/95 p-1 text-slate-100 shadow-xl backdrop-blur-md animate-in fade-in-80",
+        "z-50 min-w-[10rem] overflow-hidden rounded-lg border border-emerald-800/60 bg-[#08150e]/95 p-1 text-emerald-100 shadow-xl backdrop-blur-md animate-in fade-in-80",
         className
       )}
       {...props}
@@ -77,7 +77,7 @@ const ContextMenuItem = React.forwardRef<
   <ContextMenuPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-md px-2 py-1.5 text-xs outline-none focus:bg-slate-800 focus:text-slate-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 hover:bg-slate-800/70",
+      "relative flex cursor-default select-none items-center rounded-md px-2 py-1.5 text-xs outline-none focus:bg-emerald-900/50 focus:text-emerald-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 hover:bg-emerald-900/40 text-emerald-200",
       inset && "pl-8",
       className
     )}
@@ -93,7 +93,7 @@ const ContextMenuCheckboxItem = React.forwardRef<
   <ContextMenuPrimitive.CheckboxItem
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-xs outline-none focus:bg-slate-800 focus:text-slate-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-xs outline-none focus:bg-emerald-900/60 focus:text-emerald-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className
     )}
     checked={checked}
@@ -101,7 +101,7 @@ const ContextMenuCheckboxItem = React.forwardRef<
   >
     <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
       <ContextMenuPrimitive.ItemIndicator>
-        <Check className="h-4 w-4" />
+        <Check className="h-4 w-4 text-emerald-400" />
       </ContextMenuPrimitive.ItemIndicator>
     </span>
     {children}
@@ -117,14 +117,14 @@ const ContextMenuRadioItem = React.forwardRef<
   <ContextMenuPrimitive.RadioItem
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-xs outline-none focus:bg-slate-800 focus:text-slate-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-xs outline-none focus:bg-emerald-900/60 focus:text-emerald-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className
     )}
     {...props}
   >
     <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
       <ContextMenuPrimitive.ItemIndicator>
-        <Circle className="h-2 w-2 fill-current" />
+        <Circle className="h-2 w-2 fill-current text-emerald-400" />
       </ContextMenuPrimitive.ItemIndicator>
     </span>
     {children}
@@ -141,7 +141,7 @@ const ContextMenuLabel = React.forwardRef<
   <ContextMenuPrimitive.Label
     ref={ref}
     className={cn(
-      "px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500",
+      "px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-500/70",
       inset && "pl-8",
       className
     )}
@@ -156,7 +156,7 @@ const ContextMenuSeparator = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <ContextMenuPrimitive.Separator
     ref={ref}
-    className={cn("-mx-1 my-1 h-px bg-slate-800/80", className)}
+    className={cn("-mx-1 my-1 h-px bg-emerald-900/50", className)}
     {...props}
   />
 ))
@@ -169,7 +169,7 @@ const ContextMenuShortcut = ({
   return (
     <span
       className={cn(
-        "ml-auto text-[10px] tracking-widest text-slate-500 font-mono",
+        "ml-auto text-[10px] tracking-widest text-emerald-500/70 font-mono",
         className
       )}
       {...props}

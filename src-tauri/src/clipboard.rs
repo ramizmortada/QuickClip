@@ -116,7 +116,7 @@ impl ClipboardManager {
             let mut items = self.items.lock();
             if let Some(pos) = items.iter().position(|i| i.id == id) {
                 let mut item = items.remove(pos);
-                item.copied_at = Local::now().format("%H:%M:%S").to_string();
+                item.copied_at = Local::now().format("%l:%M %p").to_string().trim().to_string();
                 items.insert(0, item.clone());
                 save_persisted_items(app_handle, &items);
                 let _ = app_handle.emit("clipboard-updated", items.clone());
@@ -199,7 +199,7 @@ impl ClipboardManager {
                             let base64_str =
                                 base64::engine::general_purpose::STANDARD.encode(&png_bytes);
                             let data_url = format!("data:image/png;base64,{}", base64_str);
-                            let now = Local::now().format("%H:%M:%S").to_string();
+                            let now = Local::now().format("%l:%M %p").to_string().trim().to_string();
 
                             let mut items = items_arc.lock();
 
@@ -257,7 +257,7 @@ impl ClipboardManager {
                         if is_new {
                             *last_hash_arc.lock() = Some(hash.clone());
 
-                            let now = Local::now().format("%H:%M:%S").to_string();
+                            let now = Local::now().format("%l:%M %p").to_string().trim().to_string();
                             let char_count = text.chars().count();
                             let content_type = detect_content_type(&text);
                             let language = detect_code_language(&text);

@@ -1,7 +1,8 @@
 mod clipboard;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use clipboard::{ClipboardItem, ClipboardManager};
+use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -10,8 +11,56 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
+#[derive(Serialize, Deserialize, Clone)]
+struct AppConfig {
+    #[serde(default)]
+    shortcut: Option<String>,
+    #[serde(default)]
+    shortcuts: Vec<String>,
+}
+
+fn get_config_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path().app_data_dir().ok().map(|p| p.join("config.json"))
+}
+
+fn load_saved_shortcuts(app: &AppHandle) -> Vec<String> {
+    if let Some(path) = get_config_path(app) {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
+                let mut list = config.shortcuts;
+                if let Some(single) = config.shortcut {
+                    let s_trimmed = single.trim().to_string();
+                    if !s_trimmed.is_empty() && !list.iter().any(|item| item.eq_ignore_ascii_case(&s_trimmed)) {
+                        list.push(s_trimmed);
+                    }
+                }
+                if !list.is_empty() {
+                    return list;
+                }
+            }
+        }
+    }
+    vec!["Alt+V".to_string()]
+}
+
+fn save_saved_shortcuts(app: &AppHandle, shortcuts: &[String]) {
+    if let Some(path) = get_config_path(app) {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let config = AppConfig {
+            shortcut: shortcuts.first().cloned(),
+            shortcuts: shortcuts.to_vec(),
+        };
+        if let Ok(json) = serde_json::to_string_pretty(&config) {
+            let _ = std::fs::write(path, json);
+        }
+    }
+}
+
 struct AppState {
     manager: Arc<ClipboardManager>,
+    current_shortcuts: Arc<Mutex<Vec<String>>>,
 }
 
 #[cfg(windows)]
@@ -229,14 +278,95 @@ fn toggle_window(app: AppHandle) {
     }
 }
 
+#[tauri::command]
+fn get_shortcuts(state: State<'_, AppState>) -> Vec<String> {
+    state.current_shortcuts.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn add_shortcut(app: AppHandle, state: State<'_, AppState>, new_shortcut: String) -> Result<Vec<String>, String> {
+    let clean = new_shortcut.trim().to_string();
+    let parsed: Shortcut = clean
+        .parse()
+        .map_err(|e| format!("Invalid shortcut combination '{}': {:?}", clean, e))?;
+
+    let mut current = state.current_shortcuts.lock().unwrap();
+
+    if current.iter().any(|s| s.eq_ignore_ascii_case(&clean)) {
+        return Err("This shortcut is already added.".to_string());
+    }
+
+    if current.len() >= 5 {
+        return Err("Maximum of 5 shortcuts reached.".to_string());
+    }
+
+    // Register new shortcut with OS
+    app.global_shortcut()
+        .register(parsed)
+        .map_err(|e| format!("Failed to register '{}' (it may be reserved by Windows or another app): {}", clean, e))?;
+
+    current.push(clean);
+    save_saved_shortcuts(&app, &current);
+
+    Ok(current.clone())
+}
+
+#[tauri::command]
+fn remove_shortcut(app: AppHandle, state: State<'_, AppState>, shortcut_to_remove: String) -> Result<Vec<String>, String> {
+    let clean = shortcut_to_remove.trim();
+    let mut current = state.current_shortcuts.lock().unwrap();
+
+    if current.len() <= 1 {
+        return Err("You must keep at least one active shortcut.".to_string());
+    }
+
+    if let Some(pos) = current.iter().position(|s| s.eq_ignore_ascii_case(clean)) {
+        let removed = current.remove(pos);
+        if let Ok(parsed) = removed.parse::<Shortcut>() {
+            let _ = app.global_shortcut().unregister(parsed);
+        }
+        save_saved_shortcuts(&app, &current);
+    }
+
+    Ok(current.clone())
+}
+
+#[tauri::command]
+fn reset_shortcuts(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let mut current = state.current_shortcuts.lock().unwrap();
+
+    // Unregister all
+    for sc in current.iter() {
+        if let Ok(parsed) = sc.parse::<Shortcut>() {
+            let _ = app.global_shortcut().unregister(parsed);
+        }
+    }
+
+    let default_list = vec!["Alt+V".to_string()];
+    if let Ok(parsed) = "Alt+V".parse::<Shortcut>() {
+        let _ = app.global_shortcut().register(parsed);
+    }
+
+    *current = default_list.clone();
+    save_saved_shortcuts(&app, &default_list);
+
+    Ok(default_list)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let manager = Arc::new(ClipboardManager::new());
+    let current_shortcuts = Arc::new(Mutex::new(vec!["Alt+V".to_string()]));
+
     let manager_for_thread = Arc::clone(&manager);
     let manager_for_setup = Arc::clone(&manager);
+    let current_shortcuts_for_setup = Arc::clone(&current_shortcuts);
 
     tauri::Builder::default()
-        .manage(AppState { manager })
+        .manage(AppState {
+            manager,
+            current_shortcuts,
+        })
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -246,12 +376,9 @@ pub fn run() {
         ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, shortcut, event| {
+                .with_handler(|app, _shortcut, event| {
                     if event.state() == ShortcutState::Pressed {
-                        let shortcut_str = shortcut.to_string();
-                        if shortcut_str.contains("v") || shortcut_str.contains("V") {
-                            toggle_window(app.clone());
-                        }
+                        toggle_window(app.clone());
                     }
                 })
                 .build(),
@@ -270,19 +397,24 @@ pub fn run() {
             // Load saved clipboard history from disk
             manager_for_setup.init_from_disk(&app_handle);
 
+            // Load saved shortcuts from disk and register all
+            let saved_shortcuts = load_saved_shortcuts(&app_handle);
+            *current_shortcuts_for_setup.lock().unwrap() = saved_shortcuts.clone();
+
+            for sc in &saved_shortcuts {
+                if let Ok(parsed) = sc.parse::<Shortcut>() {
+                    let _ = app.global_shortcut().register(parsed);
+                }
+            }
+
             // Enable autostart with Windows on boot
             let _ = app.autolaunch().enable();
 
             // Start clipboard listener background thread
             manager_for_thread.start_monitoring(app_handle.clone());
 
-            // Register global hotkey: Alt+V
-            if let Ok(alt_shortcut) = "Alt+V".parse::<Shortcut>() {
-                let _ = app.global_shortcut().register(alt_shortcut);
-            }
-
             // Create System Tray Menu
-            let show_i = MenuItem::with_id(app, "show", "Open QuickClip (Alt+V)", true, None::<&str>)?;
+            let show_i = MenuItem::with_id(app, "show", "Open QuickClip", true, None::<&str>)?;
             let update_i = MenuItem::with_id(app, "check_update", "Check for Updates...", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit QuickClip", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &update_i, &quit_i])?;
@@ -336,6 +468,10 @@ pub fn run() {
             clear_unpinned,
             hide_window,
             toggle_window,
+            get_shortcuts,
+            add_shortcut,
+            remove_shortcut,
+            reset_shortcuts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running quickclip application");

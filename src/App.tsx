@@ -20,6 +20,11 @@ import {
   Clock,
   Layers,
   RefreshCw,
+  Settings,
+  Keyboard,
+  RotateCcw,
+  AlertCircle,
+  Plus,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -47,6 +52,45 @@ export interface ClipboardItem {
   language?: string | null
 }
 
+function formatTimeAMPM(timeStr?: string | null): string {
+  if (!timeStr) return ""
+  const trimmed = timeStr.trim()
+  if (/am|pm/i.test(trimmed)) return trimmed
+
+  const match = trimmed.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/)
+  if (match) {
+    let hours = parseInt(match[1], 10)
+    const minutes = match[2]
+    const ampm = hours >= 12 ? "PM" : "AM"
+    hours = hours % 12 || 12
+    return `${hours}:${minutes} ${ampm}`
+  }
+
+  const d = new Date(trimmed)
+  if (!isNaN(d.getTime())) {
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })
+  }
+
+  return trimmed
+}
+
+function formatKeyDisplayName(key: string): string {
+  const k = key.trim()
+  if (k.toLowerCase() === "super" || k.toLowerCase() === "meta") return "Win"
+  if (k.toLowerCase() === "command") return "Cmd"
+  if (k.toLowerCase() === "control") return "Ctrl"
+  if (k.toLowerCase() === "backquote") return "`"
+  return k
+}
+
+function formatShortcutDisplay(shortcutStr: string): string {
+  if (!shortcutStr) return ""
+  return shortcutStr
+    .split("+")
+    .map((k) => formatKeyDisplayName(k))
+    .join(" + ")
+}
+
 export default function App() {
   const [items, setItems] = useState<ClipboardItem[]>([])
   const [primaryTab, setPrimaryTab] = useState<"recent" | "pinned">("recent")
@@ -56,12 +100,20 @@ export default function App() {
   const [selectedIndex, setSelectedIndex] = useState<number>(0)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
   const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false)
+  const [showSettings, setShowSettings] = useState<boolean>(false)
+  const [globalShortcuts, setGlobalShortcuts] = useState<string[]>(["Alt+V"])
+  const [isRecording, setIsRecording] = useState<boolean>(false)
+  const [recordedKeys, setRecordedKeys] = useState<string[]>([])
+  const [shortcutError, setShortcutError] = useState<string | null>(null)
+  const [shortcutSuccess, setShortcutSuccess] = useState<string | null>(null)
+
   const [updateInfo, setUpdateInfo] = useState<Update | null>(null)
   const [isUpdating, setIsUpdating] = useState<boolean>(false)
   const [isCheckingUpdates, setIsCheckingUpdates] = useState<boolean>(false)
   const [updateStatusText, setUpdateStatusText] = useState<string>("")
   const [updateNotice, setUpdateNotice] = useState<string | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
 
   // 1. Fetch initial clipboard history and listen for live updates
   useEffect(() => {
@@ -75,6 +127,15 @@ export default function App() {
       .catch((err) => {
         console.warn("Could not fetch history via Tauri IPC (Running in browser mode):", err)
       })
+
+    // Fetch active global shortcuts
+    invoke<string[]>("get_shortcuts")
+      .then((shortcuts) => {
+        if (shortcuts && shortcuts.length > 0) {
+          setGlobalShortcuts(shortcuts)
+        }
+      })
+      .catch(() => {})
 
     // Listen for live updates emitted by Rust background thread
     let unlistenClipboard: (() => void) | undefined
@@ -172,6 +233,112 @@ export default function App() {
     }
   }
 
+  // Handle adding a new global shortcut
+  const handleAddShortcut = async (newShortcutStr: string) => {
+    try {
+      setShortcutError(null)
+      const updated = await invoke<string[]>("add_shortcut", { newShortcut: newShortcutStr })
+      setGlobalShortcuts(updated)
+      setShortcutSuccess(`Added ${formatShortcutDisplay(newShortcutStr)}`)
+      setIsRecording(false)
+      setRecordedKeys([])
+      setTimeout(() => setShortcutSuccess(null), 3000)
+    } catch (err: any) {
+      console.error("Failed to add shortcut:", err)
+      setShortcutError(typeof err === "string" ? err : "Could not register shortcut")
+    }
+  }
+
+  // Handle removing a global shortcut
+  const handleRemoveShortcut = async (shortcutToRemove: string) => {
+    try {
+      setShortcutError(null)
+      const updated = await invoke<string[]>("remove_shortcut", { shortcutToRemove })
+      setGlobalShortcuts(updated)
+      setShortcutSuccess(`Removed ${formatShortcutDisplay(shortcutToRemove)}`)
+      setTimeout(() => setShortcutSuccess(null), 3000)
+    } catch (err: any) {
+      console.error("Failed to remove shortcut:", err)
+      setShortcutError(typeof err === "string" ? err : "Could not remove shortcut")
+    }
+  }
+
+  // Handle resetting shortcuts to default
+  const handleResetShortcuts = async () => {
+    try {
+      setShortcutError(null)
+      const updated = await invoke<string[]>("reset_shortcuts")
+      setGlobalShortcuts(updated)
+      setShortcutSuccess("Reset to Alt + V")
+      setIsRecording(false)
+      setRecordedKeys([])
+      setTimeout(() => setShortcutSuccess(null), 3000)
+    } catch (err: any) {
+      console.error("Failed to reset shortcuts:", err)
+      setShortcutError(typeof err === "string" ? err : "Could not reset shortcuts")
+    }
+  }
+
+  // Intercept key recording in Settings Modal
+  useEffect(() => {
+    if (!isRecording) return
+
+    const handleRecordKey = (e: KeyboardEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+
+      if (e.key === "Escape") {
+        setIsRecording(false)
+        setRecordedKeys([])
+        return
+      }
+
+      const isModifier = ["Control", "Alt", "Shift", "Meta", "AltGraph"].includes(e.key)
+      const modifiers: string[] = []
+      if (e.ctrlKey) modifiers.push("Ctrl")
+      if (e.altKey) modifiers.push("Alt")
+      if (e.shiftKey) modifiers.push("Shift")
+      if (e.metaKey) modifiers.push("Super")
+
+      if (isModifier) {
+        setRecordedKeys(modifiers)
+        return
+      }
+
+      let keyName = ""
+      if (e.code.startsWith("Key")) {
+        keyName = e.code.slice(3).toUpperCase()
+      } else if (e.code.startsWith("Digit")) {
+        keyName = e.code.slice(5)
+      } else if (e.code === "Space") {
+        keyName = "Space"
+      } else if (e.code === "Backquote") {
+        keyName = "Backquote"
+      } else if (/^F\d{1,2}$/i.test(e.key)) {
+        keyName = e.key.toUpperCase()
+      } else {
+        keyName = e.key.toUpperCase()
+      }
+
+      const allKeys = [...modifiers]
+      if (!allKeys.includes(keyName)) {
+        allKeys.push(keyName)
+      }
+
+      setRecordedKeys(allKeys)
+
+      if (modifiers.length > 0 && keyName) {
+        const candidate = `${modifiers.join("+")}+${keyName}`
+        handleAddShortcut(candidate)
+      } else {
+        setShortcutError("Please include at least one modifier key (Alt, Win, Ctrl, or Shift)")
+      }
+    }
+
+    window.addEventListener("keydown", handleRecordKey, true)
+    return () => window.removeEventListener("keydown", handleRecordKey, true)
+  }, [isRecording])
+
   // Filter items based on Primary Tab (Recent vs Pinned), Type Filter, and Search
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
@@ -195,6 +362,7 @@ export default function App() {
       if (item.content_type === "image") {
         return (
           item.copied_at.toLowerCase().includes(q) ||
+          formatTimeAMPM(item.copied_at).toLowerCase().includes(q) ||
           (item.image_width && `${item.image_width}x${item.image_height}`.includes(q)) ||
           "image screenshot graphic".includes(q)
         )
@@ -204,7 +372,8 @@ export default function App() {
         return (
           item.text_content.toLowerCase().includes(q) ||
           (item.language && item.language.toLowerCase().includes(q)) ||
-          item.copied_at.toLowerCase().includes(q)
+          item.copied_at.toLowerCase().includes(q) ||
+          formatTimeAMPM(item.copied_at).toLowerCase().includes(q)
         )
       }
 
@@ -212,12 +381,25 @@ export default function App() {
     })
   }, [items, primaryTab, typeFilter, search])
 
+  // Reset selected index on filter changes
+  useEffect(() => {
+    setSelectedIndex(0)
+  }, [search, primaryTab, typeFilter])
+
   // Reset selected index if list length changes
   useEffect(() => {
     if (selectedIndex >= filteredItems.length && filteredItems.length > 0) {
       setSelectedIndex(0)
     }
   }, [filteredItems.length, selectedIndex])
+
+  // Auto-scroll to selected card during keyboard navigation
+  useEffect(() => {
+    const el = itemRefs.current.get(selectedIndex)
+    if (el) {
+      el.scrollIntoView({ block: "nearest", behavior: "auto" })
+    }
+  }, [selectedIndex])
 
   // Paste selected item into active input field and close clipboard
   const handlePaste = async (item: ClipboardItem) => {
@@ -288,14 +470,22 @@ export default function App() {
   // Global Keyboard Navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isRecording) return
+
       if (e.key === "Escape") {
         if (previewImage) {
           setPreviewImage(null)
+        } else if (showSettings) {
+          setShowSettings(false)
+        } else if (showClearConfirm) {
+          setShowClearConfirm(false)
         } else {
           handleClose()
         }
         return
       }
+
+      if (showSettings || showClearConfirm) return
 
       if (e.key === "ArrowDown") {
         e.preventDefault()
@@ -317,25 +507,25 @@ export default function App() {
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [filteredItems, selectedIndex, previewImage])
+  }, [filteredItems, selectedIndex, previewImage, showSettings, showClearConfirm, isRecording])
 
   const pinnedCount = useMemo(() => items.filter((i) => i.is_pinned).length, [items])
   const textCount = useMemo(() => items.filter((i) => i.content_type !== "image").length, [items])
   const imageCount = useMemo(() => items.filter((i) => i.content_type === "image").length, [items])
 
   return (
-    <div className="relative flex h-screen w-screen flex-col overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-950/95 text-slate-100 shadow-2xl backdrop-blur-3xl select-none">
-      {/* Row 1: Search Input + Clear History & Close Actions */}
-      <div className="relative flex items-center justify-between border-b border-slate-800/80 px-3 py-2 bg-slate-900/40">
+    <div className="relative flex h-screen w-screen flex-col overflow-hidden rounded-2xl border border-emerald-800/60 bg-[#070f0a]/98 text-emerald-50 shadow-2xl backdrop-blur-2xl select-none">
+      {/* Row 1: Search Input + Settings & Clear History & Close Actions */}
+      <div className="relative flex items-center justify-between border-b border-emerald-900/60 px-3 py-2 bg-[#091710]/70">
         <div className="flex flex-1 items-center mr-2">
-          <Search className="h-3.5 w-3.5 text-slate-400 shrink-0 mr-2" />
+          <Search className="h-3.5 w-3.5 text-emerald-400/70 shrink-0 mr-2" />
           <input
             ref={searchInputRef}
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search clipboard history..."
-            className="w-full bg-transparent text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none"
+            className="w-full bg-transparent text-xs text-emerald-100 placeholder:text-emerald-500/50 focus:outline-none"
             autoFocus
           />
           {search && (
@@ -344,29 +534,42 @@ export default function App() {
                 setSearch("")
                 searchInputRef.current?.focus()
               }}
-              className="text-slate-500 hover:text-slate-300 mr-1 text-xs"
+              className="text-emerald-500 hover:text-emerald-300 mr-1 text-xs"
             >
               <X className="h-3.5 w-3.5" />
             </button>
           )}
         </div>
 
-        <div className="flex items-center gap-1 border-l border-slate-800/80 pl-2">
+        <div className="flex items-center gap-1 border-l border-emerald-900/60 pl-2">
+          <Button
+            variant="ghost"
+            size="iconSm"
+            onClick={() => {
+              setShowSettings(true)
+              setShortcutError(null)
+              setShortcutSuccess(null)
+            }}
+            title={`Shortcut Settings (${globalShortcuts.map((s) => formatShortcutDisplay(s)).join(", ")})`}
+            className="text-emerald-400/70 hover:text-[#14ad72] hover:bg-emerald-900/40 h-6 w-6"
+          >
+            <Settings className="h-3.5 w-3.5" />
+          </Button>
           <Button
             variant="ghost"
             size="iconSm"
             onClick={() => checkUpdates(true)}
             title="Check for updates"
-            className="text-slate-400 hover:text-sky-400 hover:bg-sky-500/10 h-6 w-6"
+            className="text-emerald-400/70 hover:text-emerald-300 hover:bg-emerald-900/40 h-6 w-6"
           >
-            <RefreshCw className={`h-3 w-3 ${isCheckingUpdates ? "animate-spin text-sky-400" : ""}`} />
+            <RefreshCw className={`h-3 w-3 ${isCheckingUpdates ? "animate-spin text-emerald-400" : ""}`} />
           </Button>
           <Button
             variant="ghost"
             size="iconSm"
             onClick={() => setShowClearConfirm(true)}
             title="Clear unpinned history"
-            className="text-slate-400 hover:text-red-400 hover:bg-red-500/10 h-6 w-6"
+            className="text-emerald-400/70 hover:text-red-400 hover:bg-red-500/10 h-6 w-6"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
@@ -375,7 +578,7 @@ export default function App() {
             size="iconSm"
             onClick={handleClose}
             title="Close (Esc)"
-            className="text-slate-400 hover:text-slate-200 h-6 w-6"
+            className="text-emerald-400/70 hover:text-emerald-200 hover:bg-emerald-900/40 h-6 w-6"
           >
             <X className="h-3.5 w-3.5" />
           </Button>
@@ -384,14 +587,14 @@ export default function App() {
 
       {/* Manual Check Update Notice (if active) */}
       {updateNotice && (
-        <div className="flex items-center justify-between border-b border-sky-500/30 bg-sky-950/70 px-3 py-1 text-[11px] text-sky-300 animate-in fade-in-50">
+        <div className="flex items-center justify-between border-b border-emerald-700/40 bg-emerald-950/80 px-3 py-1 text-[11px] text-emerald-200 animate-in fade-in-50">
           <div className="flex items-center gap-1.5">
-            <Sparkles className="h-3 w-3 text-sky-400" />
+            <Sparkles className="h-3 w-3 text-[#14ad72]" />
             <span>{updateNotice}</span>
           </div>
           <button
             onClick={() => setUpdateNotice(null)}
-            className="text-sky-400 hover:text-sky-200"
+            className="text-emerald-400 hover:text-emerald-200"
           >
             <X className="h-3 w-3" />
           </button>
@@ -399,15 +602,15 @@ export default function App() {
       )}
 
       {/* Row 2: Dual Segmented Controls Side-by-Side */}
-      <div className="flex items-center justify-between border-b border-slate-800/80 px-2.5 py-1.5 bg-slate-950/60 gap-2">
+      <div className="flex items-center justify-between border-b border-emerald-900/60 px-2.5 py-1.5 bg-[#08130d]/80 gap-2">
         {/* Left: Recent vs Pinned Tabs */}
-        <div className="inline-flex h-6.5 items-center rounded-lg bg-slate-900/90 p-0.5 border border-slate-800/80">
+        <div className="inline-flex h-6.5 items-center rounded-lg bg-[#06100a] p-0.5 border border-emerald-900/60">
           <button
             onClick={() => setPrimaryTab("recent")}
             className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium transition-all ${
               primaryTab === "recent"
-                ? "bg-slate-800 text-sky-400 shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
+                ? "bg-emerald-900/60 text-emerald-300 shadow-sm border border-emerald-700/40"
+                : "text-emerald-400/60 hover:text-emerald-200"
             }`}
           >
             <Clock className="h-3 w-3" />
@@ -418,8 +621,8 @@ export default function App() {
             onClick={() => setPrimaryTab("pinned")}
             className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium transition-all ${
               primaryTab === "pinned"
-                ? "bg-slate-800 text-amber-400 shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
+                ? "bg-emerald-900/60 text-amber-300 shadow-sm border border-amber-500/40"
+                : "text-emerald-400/60 hover:text-emerald-200"
             }`}
           >
             <Pin className="h-3 w-3" />
@@ -429,13 +632,13 @@ export default function App() {
         </div>
 
         {/* Right: Icon-based Filters with Tooltips */}
-        <div className="inline-flex h-6.5 items-center rounded-lg bg-slate-900/90 p-0.5 border border-slate-800/80">
+        <div className="inline-flex h-6.5 items-center rounded-lg bg-[#06100a] p-0.5 border border-emerald-900/60">
           <button
             onClick={() => setTypeFilter("all")}
             className={`inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[10px] font-medium transition-all ${
               typeFilter === "all"
-                ? "bg-slate-800 text-slate-100 shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
+                ? "bg-emerald-900/60 text-emerald-100 shadow-sm border border-emerald-700/40"
+                : "text-emerald-400/60 hover:text-emerald-200"
             }`}
             title="Show All"
           >
@@ -446,8 +649,8 @@ export default function App() {
             onClick={() => setTypeFilter("text")}
             className={`inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[10px] font-medium transition-all ${
               typeFilter === "text"
-                ? "bg-slate-800 text-sky-400 shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
+                ? "bg-emerald-900/60 text-emerald-300 shadow-sm border border-emerald-700/40"
+                : "text-emerald-400/60 hover:text-emerald-200"
             }`}
             title={`Text & Code (${textCount})`}
           >
@@ -457,8 +660,8 @@ export default function App() {
             onClick={() => setTypeFilter("image")}
             className={`inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[10px] font-medium transition-all ${
               typeFilter === "image"
-                ? "bg-slate-800 text-amber-400 shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
+                ? "bg-emerald-900/60 text-amber-300 shadow-sm border border-amber-500/40"
+                : "text-emerald-400/60 hover:text-emerald-200"
             }`}
             title={`Screenshots & Images (${imageCount})`}
           >
@@ -468,16 +671,16 @@ export default function App() {
       </div>
 
       {/* Clipboard Items Scroll Area */}
-      <ScrollArea className="flex-1 px-3 py-1.5">
+      <ScrollArea className="flex-1 px-2.5 py-2">
         {filteredItems.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center text-slate-500">
-            <Sparkles className="h-8 w-8 mb-2 stroke-1 text-slate-600" />
-            <p className="text-xs font-medium text-slate-300">
+          <div className="flex flex-col items-center justify-center py-16 text-center text-emerald-500/60">
+            <Sparkles className="h-8 w-8 mb-2 stroke-1 text-emerald-600/50" />
+            <p className="text-xs font-medium text-emerald-200">
               {primaryTab === "pinned"
                 ? "No pinned items yet"
                 : "Clipboard history is empty"}
             </p>
-            <p className="text-[11px] text-slate-500 mt-1 max-w-[220px]">
+            <p className="text-[11px] text-emerald-400/50 mt-1 max-w-[220px]">
               {primaryTab === "pinned"
                 ? "Pin any copied text or screenshot to access it quickly anytime."
                 : search
@@ -486,16 +689,21 @@ export default function App() {
             </p>
           </div>
         ) : (
-          <div className="space-y-1.5 pb-2">
+          <div className="flex flex-col gap-2 pb-2">
             {filteredItems.map((item, idx) => {
               const isSelected = selectedIndex === idx
               const isCopied = copiedId === item.id
               const isImage = item.content_type === "image"
+              const formattedTime = formatTimeAMPM(item.copied_at)
 
               return (
                 <ContextMenu key={item.id}>
                   <ContextMenuTrigger>
                     <div
+                      ref={(el) => {
+                        if (el) itemRefs.current.set(idx, el)
+                        else itemRefs.current.delete(idx)
+                      }}
                       onClick={() => {
                         setSelectedIndex(idx)
                         handlePaste(item)
@@ -503,12 +711,12 @@ export default function App() {
                       onMouseEnter={() => setSelectedIndex(idx)}
                       className={`group relative flex flex-col gap-1.5 rounded-xl border p-2.5 transition-all cursor-pointer ${
                         isSelected
-                          ? "border-sky-500/50 bg-slate-900/90 shadow-md ring-1 ring-sky-500/20"
-                          : "border-slate-800/60 bg-slate-900/30 hover:border-slate-700/60 hover:bg-slate-900/60"
+                          ? "border-emerald-500/60 bg-[#0d2218]/90 shadow-md ring-1 ring-emerald-500/30"
+                          : "border-emerald-900/40 bg-[#09150f]/60 hover:border-emerald-700/50 hover:bg-[#0c1d14]/80"
                       }`}
                     >
                       {/* Top metadata row */}
-                      <div className="flex items-center justify-between text-[10px] text-slate-400">
+                      <div className="flex items-center justify-between text-[10px] text-emerald-400/70">
                         <div className="flex items-center gap-1.5">
                           {isImage ? (
                             <>
@@ -524,8 +732,8 @@ export default function App() {
                             </>
                           ) : item.content_type === "code" ? (
                             <>
-                              <Code2 className="h-3.5 w-3.5 text-sky-400" />
-                              <span className="capitalize font-medium text-sky-300">Code</span>
+                              <Code2 className="h-3.5 w-3.5 text-emerald-400" />
+                              <span className="capitalize font-medium text-emerald-300">Code</span>
                               {item.language && (
                                 <Badge variant="accent" className="h-3.5 px-1 uppercase">
                                   {item.language}
@@ -534,35 +742,56 @@ export default function App() {
                             </>
                           ) : item.content_type === "link" ? (
                             <>
-                              <Link2 className="h-3.5 w-3.5 text-emerald-400" />
-                              <span className="capitalize font-medium text-emerald-300">
+                              <Link2 className="h-3.5 w-3.5 text-teal-400" />
+                              <span className="capitalize font-medium text-teal-300">
                                 Link
                               </span>
                             </>
                           ) : (
                             <>
-                              <FileText className="h-3.5 w-3.5 text-slate-400" />
-                              <span className="capitalize font-medium text-slate-300">
+                              <FileText className="h-3.5 w-3.5 text-emerald-400/80" />
+                              <span className="capitalize font-medium text-emerald-300">
                                 Text
                               </span>
                             </>
                           )}
                         </div>
 
-                        <div className="flex items-center gap-2 text-slate-500">
+                        {/* Right side: Metadata + Quick Actions on Hover */}
+                        <div className="flex items-center gap-1.5">
                           {item.char_count && (
-                            <span className="text-[10px]">{item.char_count} chars</span>
+                            <span className="text-[10px] text-emerald-500/70">{item.char_count} chars</span>
                           )}
-                          <span className="text-[10px]">{item.copied_at}</span>
+                          <span className="text-[10px] text-emerald-500/80 font-mono">{formattedTime}</span>
                           {item.is_pinned && (
                             <Pin className="h-3 w-3 fill-amber-400 text-amber-400 shrink-0" />
                           )}
+
+                          {/* Quick Pin / Delete Action Buttons (visible on hover) */}
+                          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ml-1">
+                            <button
+                              onClick={(e) => handleTogglePin(item.id, e)}
+                              className={`p-1 rounded hover:bg-emerald-900/60 ${
+                                item.is_pinned ? "text-amber-400" : "text-emerald-400/70 hover:text-emerald-200"
+                              }`}
+                              title={item.is_pinned ? "Unpin (Ctrl+P)" : "Pin (Ctrl+P)"}
+                            >
+                              <Pin className="h-3 w-3" />
+                            </button>
+                            <button
+                              onClick={(e) => handleDelete(item.id, e)}
+                              className="p-1 rounded text-emerald-400/70 hover:text-red-400 hover:bg-red-500/10"
+                              title="Delete (Del)"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
                         </div>
                       </div>
 
                       {/* Content Preview */}
                       {isImage && item.image_data_url ? (
-                        <div className="relative rounded-lg overflow-hidden border border-slate-800 bg-slate-950/60 max-h-24 flex items-center justify-center group/img">
+                        <div className="relative rounded-lg overflow-hidden border border-emerald-900/50 bg-[#050c08] max-h-24 flex items-center justify-center group/img">
                           <img
                             src={item.image_data_url}
                             alt="Copied clipboard content"
@@ -573,52 +802,23 @@ export default function App() {
                               e.stopPropagation()
                               setPreviewImage(item.image_data_url!)
                             }}
-                            className="absolute top-1.5 right-1.5 p-1 rounded-md bg-slate-900/80 hover:bg-slate-800 text-slate-300 opacity-0 group-hover/img:opacity-100 transition-opacity"
+                            className="absolute top-1.5 right-1.5 p-1 rounded-md bg-[#0a1811]/90 hover:bg-[#0f241a] text-emerald-300 opacity-0 group-hover/img:opacity-100 transition-opacity"
                             title="Expand preview"
                           >
                             <Maximize2 className="h-3 w-3" />
                           </button>
                         </div>
                       ) : (
-                        <div className="text-xs text-slate-200 font-normal line-clamp-2 break-all whitespace-pre-wrap font-sans select-text">
+                        <div className="text-xs text-emerald-100/90 font-normal line-clamp-2 break-all whitespace-pre-wrap font-sans select-text">
                           {item.text_content}
                         </div>
                       )}
 
-                      {/* Quick action bar on hover */}
-                      <div className="flex items-center justify-between pt-0.5">
-                        <div className="flex items-center gap-1 text-[10px] text-slate-500">
-                          <kbd className="rounded bg-slate-950 px-1 py-0.2 border border-slate-800 text-slate-400 font-mono">
-                            ↵ Enter
-                          </kbd>
-                          <span>to paste</span>
-                        </div>
-
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={(e) => handleTogglePin(item.id, e)}
-                            className={`p-1 rounded hover:bg-slate-800 ${
-                              item.is_pinned ? "text-amber-400" : "text-slate-400"
-                            }`}
-                            title={item.is_pinned ? "Unpin (Ctrl+P)" : "Pin (Ctrl+P)"}
-                          >
-                            <Pin className="h-3 w-3" />
-                          </button>
-                          <button
-                            onClick={(e) => handleDelete(item.id, e)}
-                            className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-red-500/10"
-                            title="Delete (Del)"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </div>
-
                       {/* Copied feedback overlay */}
                       {isCopied && (
-                        <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-sky-950/85 border border-sky-500/60 backdrop-blur-sm animate-in fade-in-50">
-                          <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-200">
-                            <Check className="h-4 w-4 text-sky-400" />
+                        <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-[#071f13]/90 border border-emerald-500/70 backdrop-blur-sm animate-in fade-in-50">
+                          <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-200">
+                            <Check className="h-4 w-4 text-[#14ad72]" />
                             Copied to Clipboard!
                           </div>
                         </div>
@@ -628,15 +828,15 @@ export default function App() {
 
                   <ContextMenuContent>
                     <ContextMenuItem onClick={() => handlePaste(item)}>
-                      <Check className="mr-2 h-3.5 w-3.5 text-sky-400" />
+                      <Check className="mr-2 h-3.5 w-3.5 text-[#14ad72]" />
                       Paste into Input Field
                     </ContextMenuItem>
                     <ContextMenuItem onClick={(e) => handleCopyOnly(item, e)}>
-                      <Copy className="mr-2 h-3.5 w-3.5" />
+                      <Copy className="mr-2 h-3.5 w-3.5 text-emerald-400" />
                       Copy to Clipboard Only
                     </ContextMenuItem>
                     <ContextMenuItem onClick={(e) => handleTogglePin(item.id, e)}>
-                      <Pin className="mr-2 h-3.5 w-3.5" />
+                      <Pin className="mr-2 h-3.5 w-3.5 text-amber-400" />
                       {item.is_pinned ? "Unpin Item" : "Pin to Top"}
                     </ContextMenuItem>
                     <ContextMenuSeparator />
@@ -655,21 +855,28 @@ export default function App() {
         )}
       </ScrollArea>
 
-      {/* Footer Navigation Bar */}
-      <div className="flex items-center justify-between border-t border-slate-800/80 bg-slate-900/50 px-3.5 py-1.5 text-[11px] text-slate-400">
-        <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1">
-            <CommandIcon className="h-3 w-3 text-slate-500" />
-            <span>Navigate</span>
-          </span>
-          <div className="flex items-center gap-1 font-mono text-[10px]">
-            <kbd className="rounded bg-slate-950 px-1 border border-slate-800 text-slate-400">↑</kbd>
-            <kbd className="rounded bg-slate-950 px-1 border border-slate-800 text-slate-400">↓</kbd>
+      {/* Footer Navigation Bar with Shortcut indicator */}
+      <div className="flex items-center justify-between border-t border-emerald-900/60 bg-[#07130c]/90 px-3.5 py-1.5 text-[11px] text-emerald-400/80">
+        <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-1.5 text-[10.5px]">
+            <CommandIcon className="h-3 w-3 text-emerald-500/70" />
+            <span className="text-emerald-400/70">Navigate</span>
+            <div className="flex items-center gap-0.5 font-mono text-[9.5px]">
+              <kbd className="rounded bg-emerald-950/90 px-1 py-0.5 border border-emerald-800/60 text-emerald-300">↑</kbd>
+              <kbd className="rounded bg-emerald-950/90 px-1 py-0.5 border border-emerald-800/60 text-emerald-300">↓</kbd>
+            </div>
+          </div>
+
+          <div className="h-3 w-[1px] bg-emerald-800/60" />
+
+          <div className="flex items-center gap-1.5 text-[10.5px]">
+            <span className="text-emerald-400/70">Paste</span>
+            <kbd className="rounded bg-emerald-950/90 px-1.5 py-0.5 border border-emerald-800/60 font-mono text-[9.5px] text-emerald-300">↵ Enter</kbd>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="text-[10px] text-slate-500">
+          <span className="text-[10px] text-emerald-400/60 font-medium">
             {filteredItems.length} {filteredItems.length === 1 ? "entry" : "entries"}
           </span>
         </div>
@@ -677,9 +884,9 @@ export default function App() {
 
       {/* Update Available Notification Banner */}
       {updateInfo && (
-        <div className="flex items-center justify-between border-t border-sky-500/40 bg-sky-950/90 px-3 py-1.5 text-xs text-sky-200 backdrop-blur-md animate-in slide-in-from-bottom-2">
+        <div className="flex items-center justify-between border-t border-emerald-700/60 bg-emerald-950/90 px-3 py-1.5 text-xs text-emerald-200 backdrop-blur-md animate-in slide-in-from-bottom-2">
           <div className="flex items-center gap-1.5">
-            <Sparkles className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+            <Sparkles className="h-3.5 w-3.5 text-[#14ad72] shrink-0" />
             <span className="font-medium text-[11px]">
               Update v{updateInfo.version} available!
             </span>
@@ -688,10 +895,154 @@ export default function App() {
             size="sm"
             onClick={handleDownloadAndInstallUpdate}
             disabled={isUpdating}
-            className="h-6 px-2.5 text-[10px] bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold shadow-sm"
+            className="h-6 px-2.5 text-[10px] bg-[#14ad72] hover:bg-emerald-400 text-slate-950 font-semibold shadow-sm"
           >
             {isUpdating ? updateStatusText : "Update & Restart"}
           </Button>
+        </div>
+      )}
+
+      {/* Multi-Shortcut Settings Modal */}
+      {showSettings && (
+        <div
+          onClick={() => {
+            setShowSettings(false)
+            setIsRecording(false)
+          }}
+          className="absolute inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-3.5 animate-in fade-in-50"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="flex flex-col p-4 rounded-2xl bg-[#091811] border border-emerald-800/80 shadow-2xl max-w-[320px] w-full text-emerald-100 animate-in zoom-in-95"
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-2.5 border-b border-emerald-900/60">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/10 text-[#14ad72] border border-emerald-500/20">
+                  <Keyboard className="h-4 w-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-semibold text-emerald-100">Global Shortcuts</h4>
+                  <p className="text-[10px] text-emerald-400/60">Toggle QuickClip anytime</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowSettings(false)
+                  setIsRecording(false)
+                }}
+                className="p-1 rounded-md text-emerald-400 hover:text-emerald-200 hover:bg-emerald-900/40"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Active Shortcuts List */}
+            <div className="py-2.5 space-y-2">
+              <span className="text-[10px] font-medium text-emerald-400/60 uppercase tracking-wider block">
+                Active Shortcuts:
+              </span>
+
+              <div className="space-y-1.5 max-h-36 overflow-y-auto pr-0.5">
+                {globalShortcuts.map((sc, i) => (
+                  <div
+                    key={sc + i}
+                    className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-[#06100a] border border-emerald-900/70"
+                  >
+                    <div className="flex items-center gap-1">
+                      {sc.split("+").map((key, kIdx) => (
+                        <kbd
+                          key={kIdx}
+                          className="rounded-md bg-emerald-950 px-1.5 py-0.5 border border-emerald-700/60 font-mono text-[10.5px] font-semibold text-[#14ad72] shadow-sm"
+                        >
+                          {formatKeyDisplayName(key)}
+                        </kbd>
+                      ))}
+                    </div>
+
+                    {globalShortcuts.length > 1 && (
+                      <button
+                        onClick={() => handleRemoveShortcut(sc)}
+                        className="p-1 rounded text-emerald-500/60 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                        title="Remove this shortcut"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Record / Add New Shortcut Box */}
+              <div
+                onClick={() => {
+                  setIsRecording(true)
+                  setRecordedKeys([])
+                  setShortcutError(null)
+                  setShortcutSuccess(null)
+                }}
+                className={`relative flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all cursor-pointer mt-2 ${
+                  isRecording
+                    ? "border-[#14ad72] bg-emerald-950/90 ring-2 ring-[#14ad72]/40 animate-pulse"
+                    : "border-dashed border-emerald-800/80 bg-[#06100a]/50 hover:border-[#14ad72]/60 hover:bg-[#0c1d14]"
+                }`}
+              >
+                {isRecording ? (
+                  <div className="space-y-1 py-0.5">
+                    <p className="text-xs font-semibold text-[#14ad72]">
+                      {recordedKeys.length > 0
+                        ? recordedKeys.map((k) => formatKeyDisplayName(k)).join(" + ")
+                        : "Press keys to add (e.g. Win+V)..."}
+                    </p>
+                    <p className="text-[9.5px] text-emerald-400/60">Press Esc to cancel</p>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-emerald-300 hover:text-[#14ad72] py-0.5">
+                    <Plus className="h-3.5 w-3.5 text-[#14ad72]" />
+                    <span className="text-xs font-medium">Add New Shortcut</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Status feedback message */}
+              {shortcutSuccess && (
+                <div className="flex items-center gap-1.5 mt-2 p-1.5 rounded-lg bg-emerald-950/90 border border-[#14ad72]/60 text-[10px] text-emerald-200">
+                  <Check className="h-3 w-3 text-[#14ad72] shrink-0" />
+                  <span>{shortcutSuccess}</span>
+                </div>
+              )}
+
+              {shortcutError && (
+                <div className="flex items-center gap-1.5 mt-2 p-1.5 rounded-lg bg-red-950/80 border border-red-500/40 text-[10px] text-red-200">
+                  <AlertCircle className="h-3 w-3 text-red-400 shrink-0" />
+                  <span>{shortcutError}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between pt-2 border-t border-emerald-900/60 mt-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleResetShortcuts}
+                className="h-7 px-2 text-[10px] text-emerald-400/60 hover:text-emerald-200"
+              >
+                <RotateCcw className="h-3 w-3 mr-1" />
+                Reset (Alt+V)
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setShowSettings(false)
+                  setIsRecording(false)
+                }}
+                className="h-7 px-3 text-[11px] bg-[#14ad72] hover:bg-emerald-400 text-slate-950 font-semibold"
+              >
+                Done
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -703,13 +1054,13 @@ export default function App() {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="flex flex-col items-center text-center p-4 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl max-w-[270px] w-full"
+            className="flex flex-col items-center text-center p-4 rounded-xl bg-[#0a1811] border border-emerald-900 shadow-2xl max-w-[270px] w-full"
           >
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-red-500/10 text-red-400 mb-2 border border-red-500/20">
               <Trash2 className="h-4 w-4" />
             </div>
-            <h4 className="text-xs font-semibold text-slate-100">Clear Clipboard History?</h4>
-            <p className="text-[11px] text-slate-400 mt-1 mb-3.5 leading-relaxed">
+            <h4 className="text-xs font-semibold text-emerald-100">Clear Clipboard History?</h4>
+            <p className="text-[11px] text-emerald-400/60 mt-1 mb-3.5 leading-relaxed">
               This will remove unpinned items. Pinned items will remain safe.
             </p>
             <div className="flex items-center gap-2 w-full">
@@ -717,7 +1068,7 @@ export default function App() {
                 variant="outline"
                 size="sm"
                 onClick={() => setShowClearConfirm(false)}
-                className="flex-1 h-7 text-xs border-slate-700 hover:bg-slate-800"
+                className="flex-1 h-7 text-xs border-emerald-800/80 hover:bg-emerald-900/40 text-emerald-300"
               >
                 Cancel
               </Button>
@@ -747,11 +1098,11 @@ export default function App() {
             <img
               src={previewImage}
               alt="Fullscreen Preview"
-              className="max-h-[440px] max-w-[420px] object-contain rounded-xl border border-slate-700 shadow-2xl"
+              className="max-h-[440px] max-w-[420px] object-contain rounded-xl border border-emerald-800 shadow-2xl"
             />
             <button
               onClick={() => setPreviewImage(null)}
-              className="absolute top-2 right-2 p-1 rounded-full bg-slate-900/80 hover:bg-slate-800 text-slate-200"
+              className="absolute top-2 right-2 p-1 rounded-full bg-[#0a1811]/90 hover:bg-[#0f241a] text-emerald-200"
             >
               <X className="h-4 w-4" />
             </button>
