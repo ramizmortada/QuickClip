@@ -94,16 +94,23 @@ export default function App() {
       unlistenTrayUpdate = fn
     }).catch(() => {})
 
-    // Auto-focus search when window gets focus
+    // Auto-focus search & auto-check for updates whenever window is opened
     const handleFocus = () => {
       searchInputRef.current?.focus()
+      checkUpdates(false)
     }
     window.addEventListener("focus", handleFocus)
+
+    // Periodic background check every 15 minutes
+    const interval = setInterval(() => {
+      checkUpdates(false)
+    }, 15 * 60 * 1000)
 
     return () => {
       if (unlistenClipboard) unlistenClipboard()
       if (unlistenTrayUpdate) unlistenTrayUpdate()
       window.removeEventListener("focus", handleFocus)
+      clearInterval(interval)
     }
   }, [])
 

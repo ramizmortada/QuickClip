@@ -1,0 +1,15 @@
+{
+  "pub_date": "2026-08-18T11:41:43Z",
+  "notes": "QuickClip v0.1.4: Automatic update detection on window focus and periodic background checks.",
+  "version": "0.1.4",
+  "platforms": {
+    "windows-x86_64": {
+      "url": "https://github.com/ramizmortada/clipbaord/releases/download/v0.1.4/quickclip_0.1.4_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVScSsrV0p3VWZvRm12SXU4KzlxMmFvNnBEUEZDUXVJMmVkekNiVlVBb3VEVTlCaU05aFlrRi91YlhqZi9QYlp6Z0QrUE9wRjRid2NFK2h2L1JpMDBJZFhibzJPQ3E2bGdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MDUzMjk2CWZpbGU6cXVpY2tjbGlwXzAuMS40X3g2NC1zZXR1cC5leGUKV1plYnNEdWVDd2tzb1BOYWZ5ZE84VmhCdm9jL1F1TmRCSzlqeVJMSnJDN1EvMEhmSVRURzEzT2dKV3BkaE05MVRhMGJBYzBBL09YbzBMRjRKY0QyQVE9PQo="
+    },
+    "windows-x86_64-nsis": {
+      "url": "https://github.com/ramizmortada/clipbaord/releases/download/v0.1.4/quickclip_0.1.4_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVScSsrV0p3VWZvRm12SXU4KzlxMmFvNnBEUEZDUXVJMmVkekNiVlVBb3VEVTlCaU05aFlrRi91YlhqZi9QYlp6Z0QrUE9wRjRid2NFK2h2L1JpMDBJZFhibzJPQ3E2bGdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MDUzMjk2CWZpbGU6cXVpY2tjbGlwXzAuMS40X3g2NC1zZXR1cC5leGUKV1plYnNEdWVDd2tzb1BOYWZ5ZE84VmhCdm9jL1F1TmRCSzlqeVJMSnJDN1EvMEhmSVRURzEzT2dKV3BkaE05MVRhMGJBYzBBL09YbzBMRjRKY0QyQVE9PQo="
+    }
+  }
+}
