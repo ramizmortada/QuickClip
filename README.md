@@ -5,7 +5,7 @@ A fast, lightweight, and modern clipboard manager for Windows built with **Tauri
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6.svg)
 ![RAM Footprint](https://img.shields.io/badge/RAM-~25MB-emerald.svg)
-
+<img width="451" height="499" alt="capture_260818_163304" src="https://github.com/user-attachments/assets/ffb0bc2c-ced5-42ff-abdb-dea1a12afc3d" />
 ---
 
 ## ✨ Features
